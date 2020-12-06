@@ -435,19 +435,21 @@ class SeqPredModel(object):
     probs_list = []
     probs_tilde_list = []
     y_test = []
+    loss_test = []
 
     for _ in range(num_samples // self._params.batch_size):
-      out = self.sess.run([self.probs, self.probs_tilde, self.y],
+      out = self.sess.run([self.probs, self.probs_tilde, self.y, self.loss],
                           feed_dict={self.handle: self.test_handle})
 
       probs_list.append(out[0])
       probs_tilde_list.append(out[1])
       y_test.append(out[2])
+      loss_test.append(out[3])
 
     probs_test = np.stack(probs_list).reshape(-1, self._params.n_class)
     probs_tilde_test = np.stack(probs_tilde_list).reshape(
         -1, self._params.n_class)
-    return probs_test, probs_tilde_test, y_test
+    return loss_test, probs_test, probs_tilde_test, y_test
 
   def _permute_z_for_y_tilde(self):
     """Permute z using ODIN: z_tilde = z - e * tf.sign(-1 * grad(predy/z)).
