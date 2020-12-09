@@ -148,18 +148,21 @@ def main(_):
 
   # compute conditional likelihood
   import joblib as jl
-  kde = jl.load('gc_kde.jl')
-  ll_gc_in = np.log(kde.score_samples(gc_content_in.reshape((-1, 1))))
-  ll_gc_ood = np.log(kde.score_samples(gc_content_ood.reshape((-1, 1))))
-  cl_test_in = ll_test_in['frgd'] - ll_gc_in
-  cl_test_ood = ll_test_ood['frgd'] - ll_gc_ood
-  cl_test_in = np.nan_to_num(cl_test_in, nan=np.nanmin(cl_test_in) - 1)
-  cl_test_ood = np.nan_to_num(cl_test_ood, nan=np.nanmin(cl_test_ood) - 1)
+  for bandwidth in [.002, .004, .008, .016, .032]:
+    kde = jl.load(f'gc_kde_{bandwidth}.jl')
+    ll_gc_in = np.log(kde.score_samples(gc_content_in.reshape((-1, 1))))
+    ll_gc_ood = np.log(kde.score_samples(gc_content_ood.reshape((-1, 1))))
+    cl_test_in = ll_test_in['frgd'] - ll_gc_in
+    cl_test_ood = ll_test_ood['frgd'] - ll_gc_ood
+    cl_test_in = np.nan_to_num(cl_test_in, nan=np.nanmin(cl_test_in) - 1)
+    cl_test_ood = np.nan_to_num(cl_test_ood, nan=np.nanmin(cl_test_ood) - 1)
+    auc_cl = compute_auc(cl_test_in, cl_test_ood, pos_label=0)
+    print(bandwidth, auc_cl)
 
   # eval for AUC
   auc_ll = compute_auc(ll_test_in['frgd'], ll_test_ood['frgd'], pos_label=0)
   auc_llr = compute_auc(llr_test_in, llr_test_ood, pos_label=0)
-  auc_cl = compute_auc(cl_test_in, cl_test_ood, pos_label=0)
+  
 
   print('AUCs for raw likelihood and likelihood ratio: %s, %s, %s' %
         (auc_ll, auc_llr, auc_cl))
