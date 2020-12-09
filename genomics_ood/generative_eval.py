@@ -71,6 +71,7 @@ def compute_auc(neg, pos, pos_label=1):
   neg = np.array(neg)[np.logical_not(np.isnan(neg))]
   pos = np.array(pos)[np.logical_not(np.isnan(pos))]
   scores = np.concatenate((neg, pos), axis=0)
+  print(neg.shape, pos.shape, ys.shape, scores.shape)
   auc = roc_auc_score(ys, scores)
   if pos_label == 1:  # label for pos=1 and label for neg=0
     return auc
@@ -147,19 +148,23 @@ def main(_):
 
   # compute conditional likelihood
   import joblib as jl
-  kde = jl.load('kde.jl')
-  ll_gc_in = np.log(kde.score_samples(gc_content_in))
-  ll_gc_ood = np.log(kde.score_samples(gc_content_ood))
+  kde = jl.load('gc_kde.jl')
+  ll_gc_in = np.log(kde.score_samples(gc_content_in.reshape((-1, 1))))
+  ll_gc_ood = np.log(kde.score_samples(gc_content_ood.reshape((-1, 1))))
   cl_test_in = ll_test_in['frgd'] - ll_gc_in
   cl_test_ood = ll_test_ood['frgd'] - ll_gc_ood
+  cl_test_in = np.nan_to_num(cl_test_in, nan=np.nanmin(cl_test_in) - 1)
+  cl_test_ood = np.nan_to_num(cl_test_ood, nan=np.nanmin(cl_test_ood) - 1)
 
   # eval for AUC
   auc_ll = compute_auc(ll_test_in['frgd'], ll_test_ood['frgd'], pos_label=0)
   auc_llr = compute_auc(llr_test_in, llr_test_ood, pos_label=0)
   auc_cl = compute_auc(cl_test_in, cl_test_ood, pos_label=0)
 
-  print('AUCs for raw likelihood and likelihood ratio: %s, %s ' %
-        (auc_ll, auc_llr))
+  print('AUCs for raw likelihood and likelihood ratio: %s, %s, %s' %
+        (auc_ll, auc_llr, auc_cl))
+  with open('results.txt', 'a') as f:
+    f.write('auc: ' + str(auc_cl) + '\n')
 
 
 if __name__ == '__main__':

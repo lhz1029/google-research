@@ -4,6 +4,10 @@ import numpy as np
 from sklearn.neighbors import KernelDensity
 from genomics_ood import generative
 from genomics_ood import utils
+from absl import flags
+FLAGS = flags.FLAGS
+
+flags.DEFINE_float('b', .008)
 
 if __name__ == "__main__":
     ckpt_dir = '../outputs/generative_l250_bs100_lr0.0005_hr30_nrFalse_regl2_regw0.000000_fi-1_mt0.00/model/'
@@ -35,6 +39,11 @@ if __name__ == "__main__":
         x_test.append(out[0])
     x = np.array(x_test)
     x = x.reshape((-1, x.shape[-1]))
-    KernelDensity(kernel='epanechnikov', bandwidth=0.008)
-    kde.fit(x)
-    jl.dump('gc_kde.jl', kde)
+    mask = (x==1)|(x==2)
+    gc_content = mask.sum(axis=1)/mask.shape[1]
+    print(gc_content.shape)
+    kde = KernelDensity(kernel='epanechnikov', bandwidth=FLAGS.b)
+    kde.fit(gc_content.reshape((-1, 1)))
+    jl.dump(kde, 'gc_kde.jl')
+    with open('results.txt', 'a') as f:
+        f.write(str(FLAGS.b) + ' ')
