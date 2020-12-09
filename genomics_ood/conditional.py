@@ -17,5 +17,8 @@ if __name__ == "__main__":
 
     (_, in_dataset, _) = generative.load_datasets(
         params, mode_eval=True)
-    kde = KernelDensity(kernel='Epanechnikov', bandwidth=0.008).fit(in_dataset)
+    model = generative.SeqModel(params)
+    loss_in_test, _, _, y_in_test, x_in_test = model.pred_from_ckpt(
+        in_dataset, 100000)
+    kde = KernelDensity(kernel='epanechnikov', bandwidth=0.008).fit(x_in_test)
     jl.dump('gc_kde.jl', kde)
