@@ -1,5 +1,6 @@
 import os
 import joblib as jl
+import numpy as np
 from sklearn.neighbors import KernelDensity
 from genomics_ood import generative
 from genomics_ood import utils
@@ -18,7 +19,22 @@ if __name__ == "__main__":
     (_, in_dataset, _) = generative.load_datasets(
         params, mode_eval=True)
     model = generative.SeqModel(params)
-    loss_in_test, _, _, y_in_test, x_in_test = model.pred_from_ckpt(
-        in_dataset, 100000)
-    kde = KernelDensity(kernel='epanechnikov', bandwidth=0.008).fit(x_in_test)
+    model.reset()
+    test_dataset = in_dataset.batch(model._params.batch_size)
+    test_iterator = test_dataset.make_one_shot_iterator()
+    model.test_handle = model.sess.run(test_iterator.string_handle())
+    x_test = []
+    num_samples = 100000
+    for _ in range(num_samples // model._params.batch_size):
+        out = model.sess.run(
+          [model.x],
+          feed_dict={
+              model.handle: model.test_handle,
+              model.dropout_rate: 0
+          })
+        x_test.append(out[0])
+    x = np.array(x_test)
+    x = x.reshape((-1, x.shape[-1]))
+    KernelDensity(kernel='epanechnikov', bandwidth=0.008)
+    kde.fit(x)
     jl.dump('gc_kde.jl', kde)
