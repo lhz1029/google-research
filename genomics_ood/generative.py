@@ -392,7 +392,7 @@ class SeqModel(object):
     x_test = []
     for _ in range(num_samples // self._params.batch_size):
       out = self.sess.run(
-          [self.loss_i, self.loss_total, self.acc_i, self.y0, self.y],
+          [self.loss_i, self.loss_total, self.acc_i, self.y0, self.x],
           feed_dict={
               self.handle: self.test_handle,
               self.dropout_rate: 0

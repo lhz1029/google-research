@@ -116,7 +116,7 @@ def main(_):
     (_, in_test_dataset, ood_test_dataset) = generative.load_datasets(
         params, mode_eval=True)
 
-    loss_in_test, _, _, y_in_test, _ = model.pred_from_ckpt(
+    loss_in_test, _, _, y_in_test, x_in_test = model.pred_from_ckpt(
         in_test_dataset, FLAGS.n_samples)
     loss_ood_test, _, _, y_ood_test, _ = model.pred_from_ckpt(
         ood_test_dataset, FLAGS.n_samples)
@@ -126,6 +126,12 @@ def main(_):
 
     y_test_in[key] = list_to_np(y_in_test)
     y_test_ood[key] = list_to_np(y_ood_test)
+
+    x_in_test = np.array(x_in_test)
+    x_in_test = x_in_test.reshape((-1, x_in_test.shape[-1]))
+    mask = (x_in_test==1)|(x_in_test==2))
+    gc_content = mask.sum(axis=1)/mask.shape[1]
+    
 
   # double check if the examples predicted from the foreground model and
   # the background model are in the same order
