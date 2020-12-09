@@ -93,6 +93,11 @@ def restore_model_from_ckpt(ckpt_dir, ckpt_file):
   model.restore_from_ckpt(ckpt_file)
   return params, model
 
+def get_gc_content(x):
+  x = np.array(x)
+  x = x.reshape((-1, x.shape[-1]))
+  mask = (x==1)|(x==2)
+  return mask.sum(axis=1)/mask.shape[1]
 
 def main(_):
 
@@ -118,7 +123,7 @@ def main(_):
 
     loss_in_test, _, _, y_in_test, x_in_test = model.pred_from_ckpt(
         in_test_dataset, FLAGS.n_samples)
-    loss_ood_test, _, _, y_ood_test, _ = model.pred_from_ckpt(
+    loss_ood_test, _, _, y_ood_test, x_ood_test = model.pred_from_ckpt(
         ood_test_dataset, FLAGS.n_samples)
 
     ll_test_in[key] = -list_to_np(loss_in_test)  # full model likelihood ratio
@@ -127,12 +132,10 @@ def main(_):
     y_test_in[key] = list_to_np(y_in_test)
     y_test_ood[key] = list_to_np(y_ood_test)
 
-    x_in_test = np.array(x_in_test)
-    x_in_test = x_in_test.reshape((-1, x_in_test.shape[-1]))
-    mask = (x_in_test==1)|(x_in_test==2))
-    gc_content = mask.sum(axis=1)/mask.shape[1]
+    if key == 'frgd':
+      gc_content_in = get_gc_content(x_in_test)
+      gc_content_ood = get_gc_content(x_ood_test)
     
-
   # double check if the examples predicted from the foreground model and
   # the background model are in the same order
   assert np.array_equal(y_test_in['frgd'], y_test_in['bkgd'])
@@ -142,9 +145,18 @@ def main(_):
   llr_test_in = ll_test_in['frgd'] - ll_test_in['bkgd']
   llr_test_ood = ll_test_ood['frgd'] - ll_test_ood['bkgd']
 
+  # compute conditional likelihood
+  import joblib as jl
+  kde = jl.load('kde.jl')
+  ll_gc_in = np.log(kde.score_samples(gc_content_in))
+  ll_gc_ood = np.log(kde.score_samples(gc_content_ood))
+  cl_test_in = ll_test_in['frgd'] - ll_gc_in
+  cl_test_ood = ll_test_ood['frgd'] - ll_gc_ood
+
   # eval for AUC
   auc_ll = compute_auc(ll_test_in['frgd'], ll_test_ood['frgd'], pos_label=0)
   auc_llr = compute_auc(llr_test_in, llr_test_ood, pos_label=0)
+  auc_cl = compute_auc(cl_test_in, cl_test_ood, pos_label=0)
 
   print('AUCs for raw likelihood and likelihood ratio: %s, %s ' %
         (auc_ll, auc_llr))
