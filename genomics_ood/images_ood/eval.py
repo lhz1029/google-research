@@ -162,8 +162,8 @@ def load_data_and_model_and_pred(exp,
         dist,
         sess,
         return_per_pixel=return_per_pixel)
-  grad_in = tape.gradient(datasets['%s_in' % eval_mode], preds_in)
-  grad_ood = tape.gradient(data, preds_ood)
+  grad_in = tape.gradient(datasets['%s_in' % eval_mode], preds_in['log_probs'])
+  grad_ood = tape.gradient(data, preds_ood['log_probs'])
   print(grad_in.shape, grad_ood.shape)
   grad_in = tf.norm(grad_in.reshape((grad_in.shape[0], -1)), axis=1)
   grad_ood = tf.norm(grad_ood.reshape((grad_ood.shape[0], -1)), axis=1)
@@ -310,13 +310,13 @@ def main(unused_argv):
 
   # typicality approximation
   grad_auc, grad_auc_llr = compute_auc_llr(grad_in, grad_ood, grad0_in, grad0_ood)
-  plt.scatter(zeros_in, grad_in['log_probs'], color='blue')
-  plt.scatter(zeros_ood, grad_ood['log_probs'], color='red')
+  plt.scatter(zeros_in, grad_in, color='blue')
+  plt.scatter(zeros_ood, grad_ood, color='red')
   plt.title(FLAGS.exp + ' typicality')
   plt.savefig(FLAGS.exp + ' typicality' + '.pdf', bbox_inches='tight')
   plt.clf()
-  plt.scatter(zeros_in, grad_in['log_probs'] - grad0_in['log_probs'], color='blue')
-  plt.scatter(zeros_ood, grad_ood['log_probs'] - grad0_ood['log_probs'], color='red')
+  plt.scatter(zeros_in, grad_in - grad0_in, color='blue')
+  plt.scatter(zeros_ood, grad_ood - grad0_ood, color='red')
   plt.title(FLAGS.exp + ' typicality ratio')
   plt.savefig(FLAGS.exp + ' typicality ratio' + '.pdf', bbox_inches='tight')
   print_and_write(out_f, 'final test grad, auc={}, auc_llr={}'.format(auc, auc_llr))
