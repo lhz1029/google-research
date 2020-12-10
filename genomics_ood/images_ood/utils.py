@@ -55,6 +55,24 @@ def load_fmnist_datasets(data_dir):
       'test_ood': test_ood
   }
 
+def load_mnist_datasets(data_dir):
+  """Load MNIST and fashionMNIST dataset from np array."""
+  tr_in = load_tfdata_from_np(os.path.join(data_dir, 'mnist_train.npy'))
+  val_in = load_tfdata_from_np(os.path.join(data_dir, 'mnist_val.npy'))
+  test_in = load_tfdata_from_np(
+      os.path.join(data_dir, 'mnist_test.npy'))
+
+  val_ood = load_tfdata_from_np(os.path.join(data_dir, 'notmnist.npy'))
+  test_ood = load_tfdata_from_np(os.path.join(data_dir, 'fashion_mnist_test.npy'))
+
+  return {
+      'tr_in': tr_in,
+      'val_in': val_in,
+      'test_in': test_in,
+      'val_ood': val_ood,
+      'test_ood': test_ood
+  }
+
 
 def load_cifar_datasets(data_dir):
   """Load CIFAR10 and SVHN dataset from np array."""

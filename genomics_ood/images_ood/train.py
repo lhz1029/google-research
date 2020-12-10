@@ -135,6 +135,8 @@ def main(unused_argv):
   # Load the datasets
   if FLAGS.exp == 'fashion':
     datasets = utils.load_fmnist_datasets(FLAGS.data_dir)
+  if FLAGS.exp == 'mnist':
+    datasets = utils.load_mnist_datasets(FLAGS.data_dir)
   else:
     datasets = utils.load_cifar_datasets(FLAGS.data_dir)
 

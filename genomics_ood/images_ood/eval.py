@@ -58,6 +58,8 @@ MUTATION_RATE_LIST = [0.1, 0.2, 0.3]
 def load_datasets(exp, data_dir):
   if exp == 'fashion':
     datasets = utils.load_fmnist_datasets(data_dir)
+  elif exp == 'mnist':
+    datasets = utils.load_mnist_datasets(data_dir)
   else:
     datasets = utils.load_cifar_datasets(data_dir)
   return datasets
@@ -211,6 +213,25 @@ def plot_heatmap(n, data, plt_file, colorbar=True):
   with tf.gfile.Open(plt_file, 'wb') as sp:
     plt.savefig(sp, format='pdf', bbox_inches='tight')
 
+def calculate_zeros(exp, data_dir):
+  if exp == 'fashion':
+    test_in = os.path.join(data_dir, 'fashion_mnist_test.npy')
+    test_ood = os.path.join(data_dir, 'mnist_test.npy')
+  elif exp == 'mnist':
+    test_in = os.path.join(data_dir, 'mnist_test.npy')
+    test_ood = os.path.join(data_dir, 'fashion_mnist_test.npy')
+  elif exp == 'cifar':
+    test_in = os.path.join(data_dir, 'cifar10_test.npy')
+    test_ood = os.path.join(data_dir, 'svhn_cropped_test.npy')
+  else:
+    raise ValueError("exp not supported: ", exp)
+  img_in = np.load(test_in)
+  img_ood = np.load(test_ood)
+  img_in = img_in.reshape((img_in.shape[0], -1))
+  img_ood = img_ood.reshape((img_ood.shape[0], -1))
+  zeros_in = (img_in == 0).sum(axis=1) / img_in.shape[1]
+  zeros_ood = (img_ood == 0).sum(axis=1) / img_ood.shape[1]
+  return zeros_in, zeros_ood
 
 def main(unused_argv):
 
@@ -276,6 +297,16 @@ def main(unused_argv):
       'test',
       return_per_pixel=True)
   auc, auc_llr = compute_auc_llr(preds_in, preds_ood, preds0_in, preds0_ood)
+  zeros_in, zeros_ood = calculate_zeros(FLAGS.exp, FLAGS.data_dir)
+  plt.scatter(zeros_in, preds_in['log_probs'], color='blue')
+  plt.scatter(zeros_ood, preds_ood['log_probs'], color='red')
+  plt.title(FLAGS.exp + ' likelihood')
+  plt.savefig(FLAGS.exp + ' likelihood' + '.pdf', bbox_inches='tight')
+  
+  plt.scatter(zeros_in, preds_in['log_probs'] - preds0_in['log_probs'], color='blue')
+  plt.scatter(zeros_ood, preds_ood['log_probs'] - preds0_ood['log_probs'], color='red')
+  plt.title(FLAGS.exp + ' llr')
+  plt.savefig(FLAGS.exp + ' llr' + '.pdf', bbox_inches='tight')
   print_and_write(out_f, 'final test, auc={}, auc_llr={}'.format(auc, auc_llr))
 
   out_f.close()
