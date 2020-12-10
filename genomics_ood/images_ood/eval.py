@@ -137,33 +137,33 @@ def load_data_and_model_and_pred(exp,
   dist, params, sess = create_model_and_restore_ckpt(ckpt_file)
 
   # Evaluations
-  with tf.GradientTape() as tape:
-    tape.watch(datasets['%s_in' % eval_mode])
-    preds_in = utils.eval_on_data(
-        datasets['%s_in' % eval_mode],
-        utils.image_preprocess,
-        params,
-        dist,
-        sess,
-        return_per_pixel=return_per_pixel)
-    if eval_mode == 'val':
-      if exp in ['fashion', 'mnist']:
-        data = datasets['val_ood']
-      else:
-        data = datasets['val_in']
-    elif eval_mode == 'test':
-      data = datasets['test_ood']
+  preds_in = utils.eval_on_data(
+      datasets['%s_in' % eval_mode],
+      utils.image_preprocess,
+      params,
+      dist,
+      sess,
+      return_per_pixel=return_per_pixel)
+  if eval_mode == 'val':
+    if exp in ['fashion', 'mnist']:
+      data = datasets['val_ood']
     else:
-      raise ValueError("Bad eval_mode: ", eval_mode)
-    preds_ood = utils.eval_on_data(
-        data,
-        utils.image_preprocess,
-        params,
-        dist,
-        sess,
-        return_per_pixel=return_per_pixel)
-  grad_in = tape.gradient(datasets['%s_in' % eval_mode], preds_in['log_probs'])
-  grad_ood = tape.gradient(data, preds_ood['log_probs'])
+      data = datasets['val_in']
+  elif eval_mode == 'test':
+    data = datasets['test_ood']
+  else:
+    raise ValueError("Bad eval_mode: ", eval_mode)
+  preds_ood = utils.eval_on_data(
+      data,
+      utils.image_preprocess,
+      params,
+      dist,
+      sess,
+      return_per_pixel=return_per_pixel)
+  # grad_in = tape.gradient(datasets['%s_in' % eval_mode], preds_in['log_probs'])
+  # grad_ood = tape.gradient(data, preds_ood['log_probs'])
+  grad_in = preds_in.pop('grads')
+  grad_ood = preds_ood.pop('grads')
   print(grad_in.shape, grad_ood.shape)
   grad_in = tf.norm(grad_in.reshape((grad_in.shape[0], -1)), axis=1)
   grad_ood = tf.norm(grad_ood.reshape((grad_ood.shape[0], -1)), axis=1)

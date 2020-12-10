@@ -200,13 +200,19 @@ def eval_on_data(data,
   log_prob_i_list = []
   label_i_list = []
   image_i_list = []
+  grad_i_list = []
 
   log_prob = dist.log_prob(data_im['image'], return_per_pixel=return_per_pixel)
   # eval on dataset
   while True:
     try:
-      log_prob_np, label_np, image_np = sess.run(
-          [log_prob, data_im['label'], data_im['image']])
+      with tf.GradientTape() as tape:
+        label, img = data_im['label'], data_im['image']
+        tape.watch(data_im['image'])
+        log_prob_np, label_np, image_np = sess.run(
+            [log_prob, label, img])
+      grad = tape.gradient(img, log_prob)
+      grad_i_list.append(grad)
       log_prob_i_list.append(np.expand_dims(log_prob_np, axis=-1))
       label_i_list += list(label_np.reshape(-1))
       image_i_list.append(image_np)
@@ -220,7 +226,7 @@ def eval_on_data(data,
   label_i_np = np.array(label_i_list)
   image_i_np = np.squeeze(np.vstack(image_i_list)).reshape(
       -1, params['n_dim'], params['n_dim'], params['n_channel'])
-  out = {'log_probs': log_prob_i_np, 'labels': label_i_np, 'images': image_i_np}
+  out = {'log_probs': log_prob_i_np, 'labels': label_i_np, 'images': image_i_np, 'grads': grad_i_list}
   if return_per_pixel:
     out['log_probs_per_pixel'] = np.squeeze(log_prob_i_t_np)
   return out
