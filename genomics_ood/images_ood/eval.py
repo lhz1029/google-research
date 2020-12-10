@@ -145,7 +145,7 @@ def load_data_and_model_and_pred(exp,
       sess,
       return_per_pixel=return_per_pixel)
   if eval_mode == 'val':
-    if exp == 'fashion':
+    if exp in ['fashion', 'mnist']:
       preds_ood = utils.eval_on_data(
           datasets['val_ood'],
           utils.image_preprocess,
@@ -312,7 +312,7 @@ def main(unused_argv):
   out_f.close()
 
   # plot heatmaps (Figure 3)
-  if FLAGS.exp == 'fashion':
+  if FLAGS.exp in ['fashion', 'mnist']:
     n = 4
 
     # FashionMNIST
@@ -330,7 +330,7 @@ def main(unused_argv):
         for i in range(n * n)
     ]
     plt_file = os.path.join(
-        out_dir, 'run%d_heatmap_fashionmnist_p(x).pdf' % FLAGS.repeat_id)
+        out_dir, f'run%d_heatmap_{FLAGS.exp}_test_in_p(x).pdf' % FLAGS.repeat_id)
     plot_heatmap(n, data, plt_file)
 
     ## LLR
@@ -339,7 +339,7 @@ def main(unused_argv):
         log_probs0_pp_in[log_probs_in_sorted[ids_seq[i]]] for i in range(n * n)
     ]
     plt_file = os.path.join(
-        out_dir, 'run%d_heatmap_fashionmnist_LLR(x).pdf' % FLAGS.repeat_id)
+        out_dir, f'run%d_heatmap_{FLAGS.exp}_test_in_LLR(x).pdf' % FLAGS.repeat_id)
     plot_heatmap(n, data, plt_file)
 
     # MNIST
@@ -357,7 +357,7 @@ def main(unused_argv):
         for i in range(n * n)
     ]
     plt_file = os.path.join(out_dir,
-                            'run%d_heatmap_mnist_p(x).pdf' % FLAGS.repeat_id)
+                            f'run%d_heatmap_{FLAGS.exp}_test_ood_p(x).pdf' % FLAGS.repeat_id)
     plot_heatmap(n, data, plt_file)
 
     ## LLR
@@ -367,7 +367,7 @@ def main(unused_argv):
         for i in range(n * n)
     ]
     plt_file = os.path.join(out_dir,
-                            'run%d_heatmap_mnist_LLR(x).pdf' % FLAGS.repeat_id)
+                            f'run%d_heatmap_{FLAGS.exp}_test_ood_LLR(x).pdf' % FLAGS.repeat_id)
     plot_heatmap(n, data, plt_file)
 
 
