@@ -116,8 +116,8 @@ def main(_):
     params, model = restore_model_from_ckpt(model_dir[key], ckpt_file)
 
     # specify test datasets for eval
-    params.in_val_file_pattern = 'in_test'
-    params.ood_val_file_pattern = 'ood_test'
+    params.in_val_file_pattern = 'in_val' # 'in_test'
+    params.ood_val_file_pattern = 'ood_val' # 'ood_test'
 
     (_, in_test_dataset, ood_test_dataset) = generative.load_datasets(
         params, mode_eval=True)
@@ -148,16 +148,22 @@ def main(_):
 
   # compute conditional likelihood
   import joblib as jl
-  for bandwidth in [.002, .004, .008, .016, .032]:
+  for bandwidth in [.002]: # [.002, .004, .008, .016, .032]:
     kde = jl.load(f'gc_kde_{bandwidth}.jl')
-    ll_gc_in = np.log(kde.score_samples(gc_content_in.reshape((-1, 1))))
-    ll_gc_ood = np.log(kde.score_samples(gc_content_ood.reshape((-1, 1))))
+    ll_gc_in = kde.score_samples(gc_content_in.reshape((-1, 1)))
+    ll_gc_ood = kde.score_samples(gc_content_ood.reshape((-1, 1)))
     cl_test_in = ll_test_in['frgd'] - ll_gc_in
     cl_test_ood = ll_test_ood['frgd'] - ll_gc_ood
-    cl_test_in = np.nan_to_num(cl_test_in, nan=np.nanmin(cl_test_in) - 1)
-    cl_test_ood = np.nan_to_num(cl_test_ood, nan=np.nanmin(cl_test_ood) - 1)
+    cl_test_in = np.nan_to_num(cl_test_in, nan=-9999, posinf=-9999)
+    cl_test_ood = np.nan_to_num(cl_test_ood, nan=-9999, posinf=-9999)
     auc_cl = compute_auc(cl_test_in, cl_test_ood, pos_label=0)
     print(bandwidth, auc_cl)
+    np.save('ll_gc_in', ll_gc_in)
+    np.save('ll_gc_ood', ll_gc_ood)
+    np.save('ll_test_in', ll_test_in['frgd'])
+    np.save('ll_test_ood', ll_test_ood['frgd'])
+    np.save('gc_content_in', gc_content_in)
+    np.save('gc_content_ood', gc_content_ood)
 
   # eval for AUC
   auc_ll = compute_auc(ll_test_in['frgd'], ll_test_ood['frgd'], pos_label=0)
