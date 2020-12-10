@@ -302,7 +302,7 @@ def main(unused_argv):
   plt.scatter(zeros_ood, preds_ood['log_probs'], color='red')
   plt.title(FLAGS.exp + ' likelihood')
   plt.savefig(FLAGS.exp + ' likelihood' + '.pdf', bbox_inches='tight')
-  
+  plt.clf()
   plt.scatter(zeros_in, preds_in['log_probs'] - preds0_in['log_probs'], color='blue')
   plt.scatter(zeros_ood, preds_ood['log_probs'] - preds0_ood['log_probs'], color='red')
   plt.title(FLAGS.exp + ' llr')

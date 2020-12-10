@@ -131,11 +131,10 @@ def main(unused_argv):
   tf.keras.backend.clear_session()
   sess = tf.compat.v1.Session()
   tf.compat.v1.keras.backend.set_session(sess)
-
   # Load the datasets
   if FLAGS.exp == 'fashion':
     datasets = utils.load_fmnist_datasets(FLAGS.data_dir)
-  if FLAGS.exp == 'mnist':
+  elif FLAGS.exp == 'mnist':
     datasets = utils.load_mnist_datasets(FLAGS.data_dir)
   else:
     datasets = utils.load_cifar_datasets(FLAGS.data_dir)
