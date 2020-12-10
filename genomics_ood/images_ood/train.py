@@ -114,8 +114,8 @@ def main(unused_argv):
       'momentum2': FLAGS.momentum2,
       'eval_every': FLAGS.eval_every,
       'save_im': FLAGS.save_im,
-      'n_dim': 28 if FLAGS.exp == 'fashion' else 32,
-      'n_channel': 1 if FLAGS.exp == 'fashion' else 3,
+      'n_dim': 28 if FLAGS.exp in ['fashion', 'mnist']  else 32,
+      'n_channel': 1 if FLAGS.exp in ['fashion', 'mnist'] else 3,
       'exp': FLAGS.exp,
       'rescale_pixel_value': FLAGS.rescale_pixel_value,
   }
