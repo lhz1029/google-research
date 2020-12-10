@@ -137,39 +137,37 @@ def load_data_and_model_and_pred(exp,
   dist, params, sess = create_model_and_restore_ckpt(ckpt_file)
 
   # Evaluations
-  preds_in = utils.eval_on_data(
-      datasets['%s_in' % eval_mode],
-      utils.image_preprocess,
-      params,
-      dist,
-      sess,
-      return_per_pixel=return_per_pixel)
-  if eval_mode == 'val':
-    if exp in ['fashion', 'mnist']:
-      preds_ood = utils.eval_on_data(
-          datasets['val_ood'],
-          utils.image_preprocess,
-          params,
-          dist,
-          sess,
-          return_per_pixel=return_per_pixel)
-    else:
-      preds_ood = utils.eval_on_data(
-          datasets['val_in'],
-          utils.image_preprocess_grey,
-          params,
-          dist,
-          sess,
-          return_per_pixel=return_per_pixel)
-  elif eval_mode == 'test':
-    preds_ood = utils.eval_on_data(
-        datasets['test_ood'],
+  with tf.GradientTape() as tape:
+    tape.watch(datasets['%s_in' % eval_mode])
+    preds_in = utils.eval_on_data(
+        datasets['%s_in' % eval_mode],
         utils.image_preprocess,
         params,
         dist,
         sess,
         return_per_pixel=return_per_pixel)
-  return preds_in, preds_ood
+    if eval_mode == 'val':
+      if exp in ['fashion', 'mnist']:
+        data = datasets['val_ood']
+      else:
+        data = datasets['val_in']
+    elif eval_mode == 'test':
+      data = datasets['test_ood']
+    else:
+      raise ValueError("Bad eval_mode: ", eval_mode)
+    preds_ood = utils.eval_on_data(
+        data,
+        utils.image_preprocess,
+        params,
+        dist,
+        sess,
+        return_per_pixel=return_per_pixel)
+  grad_in = tape.gradient(datasets['%s_in' % eval_mode], preds_in)
+  grad_ood = tape.gradient(data, preds_ood)
+  print(grad_in.shape, grad_ood.shape)
+  grad_in = tf.norm(grad_in.reshape((grad_in.shape[0], -1)), axis=1)
+  grad_ood = tf.norm(grad_ood.reshape((grad_ood.shape[0], -1)), axis=1)
+  return preds_in, preds_ood, grad_in, grad_ood
 
 
 def compute_auc_llr(preds_in, preds_ood, preds0_in, preds0_ood):
@@ -244,7 +242,7 @@ def main(unused_argv):
 
   ## Find best bkg model using validation datasets (NotMNIST/CIFAR_grey)
   # foreground model
-  preds_in, preds_ood = load_data_and_model_and_pred(FLAGS.exp, FLAGS.data_dir,
+  preds_in, preds_ood, _, _ = load_data_and_model_and_pred(FLAGS.exp, FLAGS.data_dir,
                                                      0.0, 0.0, FLAGS.repeat_id,
                                                      FLAGS.ckpt_step, 'val')
 
@@ -252,7 +250,7 @@ def main(unused_argv):
   auc_llr_reg_mr = np.zeros((len(REG_WEIGHT_LIST), len(MUTATION_RATE_LIST)))
   for reg_weight in REG_WEIGHT_LIST:
     for mutation_rate in MUTATION_RATE_LIST:
-      preds0_in, preds0_ood = load_data_and_model_and_pred(
+      preds0_in, preds0_ood, _, _ = load_data_and_model_and_pred(
           FLAGS.exp, FLAGS.data_dir, reg_weight, mutation_rate, FLAGS.repeat_id,
           FLAGS.ckpt_step, 'val')
       if not (preds0_in and preds0_ood):
@@ -276,7 +274,7 @@ def main(unused_argv):
 
   ## Final test on FashionMNIST-MNIST/CIFAR-SVHN
   # foreground model
-  preds_in, preds_ood = load_data_and_model_and_pred(
+  preds_in, preds_ood, grad_in, grad_ood = load_data_and_model_and_pred(
       FLAGS.exp,
       FLAGS.data_dir,
       0.0,
@@ -287,7 +285,7 @@ def main(unused_argv):
       return_per_pixel=True)
 
   # background model
-  preds0_in, preds0_ood = load_data_and_model_and_pred(
+  preds0_in, preds0_ood, grad0_in, grad0_ood = load_data_and_model_and_pred(
       FLAGS.exp,
       FLAGS.data_dir,
       selected_reg,
@@ -308,6 +306,20 @@ def main(unused_argv):
   plt.title(FLAGS.exp + ' llr')
   plt.savefig(FLAGS.exp + ' llr' + '.pdf', bbox_inches='tight')
   print_and_write(out_f, 'final test, auc={}, auc_llr={}'.format(auc, auc_llr))
+  plt.clf()
+
+  # typicality approximation
+  grad_auc, grad_auc_llr = compute_auc_llr(grad_in, grad_ood, grad0_in, grad0_ood)
+  plt.scatter(zeros_in, grad_in['log_probs'], color='blue')
+  plt.scatter(zeros_ood, grad_ood['log_probs'], color='red')
+  plt.title(FLAGS.exp + ' typicality')
+  plt.savefig(FLAGS.exp + ' typicality' + '.pdf', bbox_inches='tight')
+  plt.clf()
+  plt.scatter(zeros_in, grad_in['log_probs'] - grad0_in['log_probs'], color='blue')
+  plt.scatter(zeros_ood, grad_ood['log_probs'] - grad0_ood['log_probs'], color='red')
+  plt.title(FLAGS.exp + ' typicality ratio')
+  plt.savefig(FLAGS.exp + ' typicality ratio' + '.pdf', bbox_inches='tight')
+  print_and_write(out_f, 'final test grad, auc={}, auc_llr={}'.format(auc, auc_llr))
 
   out_f.close()
 
