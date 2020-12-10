@@ -164,7 +164,11 @@ def load_data_and_model_and_pred(exp,
   # grad_ood = tape.gradient(data, preds_ood['log_probs'])
   grad_in = preds_in.pop('grads')
   grad_ood = preds_ood.pop('grads')
+  grad_in = np.array(grad_in)
+  grad_ood = np.array(grad_ood)
   print(grad_in.shape, grad_ood.shape)
+  np.save('grad_in', grad_in)
+  np.save('grad_ood', grad_ood)
   grad_in = tf.norm(grad_in.reshape((grad_in.shape[0], -1)), axis=1)
   grad_ood = tf.norm(grad_ood.reshape((grad_ood.shape[0], -1)), axis=1)
   return preds_in, preds_ood, grad_in, grad_ood
