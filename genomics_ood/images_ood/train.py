@@ -174,6 +174,7 @@ def main(unused_argv):
     grad_fx = tf.gradients(log_prob_i, fx)[0]
     print(tf.shape(grad_fx))
     penalty = FLAGS.lambda_penalty * grad_fx
+    log_prob_i = log_prob_i - penalty
   loss = -tf.reduce_mean(log_prob_i)
 
   log_prob_i_val_in = dist.log_prob(val_in_im['image'])
