@@ -132,7 +132,8 @@ def load_data_and_model_and_pred(exp,
   ckpt_file = find_ckpt_match_param(reg_weight, mutation_rate, repeat_id,
                                     ckpt_step)
   if not ckpt_file:  # no ckpt file is found
-    return None, None
+    # raise ValueError('No ckpt model found')
+    return None, None, None, None
 
   dist, params, sess = create_model_and_restore_ckpt(ckpt_file)
 
@@ -167,10 +168,10 @@ def load_data_and_model_and_pred(exp,
   grad_in = np.array(grad_in)
   grad_ood = np.array(grad_ood)
   print(grad_in.shape, grad_ood.shape)
-  np.save('grad_in', grad_in)
-  np.save('grad_ood', grad_ood)
-  grad_in = tf.norm(grad_in.reshape((grad_in.shape[0], -1)), axis=1)
-  grad_ood = tf.norm(grad_ood.reshape((grad_ood.shape[0], -1)), axis=1)
+  np.save(f'grad_in_{exp}', grad_in)
+  np.save(f'grad_ood_{exp}', grad_ood)
+  # grad_in = tf.norm(grad_in.reshape((grad_in.shape[0], -1)), axis=1)
+  # grad_ood = tf.norm(grad_ood.reshape((grad_ood.shape[0], -1)), axis=1)
   return preds_in, preds_ood, grad_in, grad_ood
 
 
@@ -188,6 +189,16 @@ def compute_auc_llr(preds_in, preds_ood, preds0_in, preds0_ood):
   auc_llr = utils.compute_auc(llr_in, llr_ood, pos_label=0)
   return auc, auc_llr
 
+def compute_auc_grad(preds_in, preds_ood, preds0_in, preds0_ood):
+  """Compute AUC for LLR."""
+
+  # evaluate AUROC for OOD detection
+  auc = utils.compute_auc(
+      preds_in, preds_ood, pos_label=0)
+  llr_in = preds_in - preds0_in
+  llr_ood = preds_ood - preds0_ood
+  auc_llr = utils.compute_auc(llr_in, llr_ood, pos_label=0)
+  return auc, auc_llr
 
 def print_and_write(f, context):
   print(context + '\n')
@@ -313,7 +324,12 @@ def main(unused_argv):
   plt.clf()
 
   # typicality approximation
-  grad_auc, grad_auc_llr = compute_auc_llr(grad_in, grad_ood, grad0_in, grad0_ood)
+  grad_in = grad_in.reshape((-1))
+  grad_ood = grad_ood.reshape((-1))
+  grad0_in = grad0_in.reshape((-1))
+  grad0_ood = grad0_ood.reshape((-1))
+  grad_auc, grad_auc_llr = compute_auc_grad(grad_in, grad_ood, grad0_in, grad0_ood)
+  print(zeros_in.shape, grad_in.shape)
   plt.scatter(zeros_in, grad_in, color='blue')
   plt.scatter(zeros_ood, grad_ood, color='red')
   plt.title(FLAGS.exp + ' typicality')

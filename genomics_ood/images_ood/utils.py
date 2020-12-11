@@ -200,8 +200,8 @@ def eval_on_data(data,
   log_prob = dist.log_prob(data_im['image'], return_per_pixel=return_per_pixel)
   # log_prob = dist.log_prob(data_im['image'], return_per_pixel=return_per_pixel)
   # image = tf.placeholder(tf.float32, shape=dist.image_shape)
-  gradients = tf.gradients(log_prob, data_im['image'])
-  grad_norm = tf.norm(gradients.reshape((gradients.shape[0], -1)), axis=1)
+  gradients = tf.gradients(log_prob, data_im['image'])[0]
+  grad_norm = tf.norm(tf.reshape(gradients, [gradients.shape[0], -1]), axis=1)
   log_prob_i_list = []
   label_i_list = []
   image_i_list = []
