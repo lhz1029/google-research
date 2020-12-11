@@ -42,6 +42,7 @@ if __name__ == "__main__":
     mask = (x==1)|(x==2)
     gc_content = mask.sum(axis=1)/mask.shape[1]
     print(gc_content.shape)
+    np.save('gc_content_train.npy', gc_content)
     for bandwidth in [.002, .004, .008, .016, .032]:
         kde = KernelDensity(kernel='epanechnikov', bandwidth=bandwidth)
         kde.fit(gc_content.reshape((-1, 1)))

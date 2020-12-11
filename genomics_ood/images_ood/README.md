@@ -44,18 +44,18 @@ OUTDIR=./genomics_ood/images_ood/output
 
 ### Train a foreground model for FashionMNIST. (For testing purpose, we only train for 10 steps.)
 ```bash
-EXPNAME=fashion
-TOTAL_STEPS=10
-EVAL_EVERY=10
+export EXPNAME=fashion
+export TOTAL_STEPS=50000
+export EVAL_EVERY=1000
 
-python -m genomics_ood.images_ood.train \
+nohup python -m genomics_ood.images_ood.train \
 --exp=$EXPNAME \
 --data_dir=$DATADIR \
 --out_dir=$OUTDIR \
 --total_steps=$TOTAL_STEPS \
 --eval_every=$EVAL_EVERY \
 --mutation_rate=0.0 \
---reg_weight=0.0
+--reg_weight=0.0 > nohup.out &
 ```
 
 ### Train background models for FashionMNIST
