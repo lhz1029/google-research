@@ -201,7 +201,7 @@ def eval_on_data(data,
   # log_prob = dist.log_prob(data_im['image'], return_per_pixel=return_per_pixel)
   # image = tf.placeholder(tf.float32, shape=dist.image_shape)
   gradients = tf.gradients(log_prob, data_im['image'])[0]
-  grad_norm = tf.norm(tf.reshape(gradients, [gradients.shape[0], -1]), axis=1)
+  grad_norm = tf.norm(tf.reshape(gradients, [tf.shape(gradients)[0], -1]), axis=1)
   log_prob_i_list = []
   label_i_list = []
   image_i_list = []
@@ -221,13 +221,14 @@ def eval_on_data(data,
     except tf.errors.OutOfRangeError:
       break
 
+  grad_i_np = np.hstack(grad_i_list)
   log_prob_i_t_np = np.vstack(log_prob_i_list)
   log_prob_i_np = np.sum(
       log_prob_i_t_np.reshape(log_prob_i_t_np.shape[0], -1), axis=1)
   label_i_np = np.array(label_i_list)
   image_i_np = np.squeeze(np.vstack(image_i_list)).reshape(
       -1, params['n_dim'], params['n_dim'], params['n_channel'])
-  out = {'log_probs': log_prob_i_np, 'labels': label_i_np, 'images': image_i_np, 'grads': grad_i_list}
+  out = {'log_probs': log_prob_i_np, 'labels': label_i_np, 'images': image_i_np, 'grads': grad_i_np}
   if return_per_pixel:
     out['log_probs_per_pixel'] = np.squeeze(log_prob_i_t_np)
   return out
