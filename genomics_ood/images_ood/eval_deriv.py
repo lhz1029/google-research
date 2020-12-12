@@ -317,8 +317,7 @@ def main(unused_argv):
 
     # FashionMNIST
     log_probs_in = preds_in['log_probs']
-    log_probs_pp_in, log_probs0_pp_in = preds_in[
-        'log_probs_per_pixel'], preds0_in['log_probs_per_pixel']
+    log_probs_pp_in = preds_in['log_probs_per_pixel']
     n_sample_in = len(log_probs_in)
     log_probs_in_sorted = sorted(
         range(n_sample_in), key=lambda k: log_probs_in[k], reverse=True)
@@ -335,8 +334,7 @@ def main(unused_argv):
 
     # MNIST
     log_probs_ood = preds_ood['log_probs']
-    log_probs_pp_ood, log_probs0_pp_ood = preds_ood[
-        'log_probs_per_pixel'], preds0_ood['log_probs_per_pixel']
+    log_probs_pp_ood = preds_ood['log_probs_per_pixel']
     n_sample_ood = len(log_probs_ood)
     log_probs_ood_sorted = sorted(
         range(n_sample_ood), key=lambda k: log_probs_ood[k], reverse=True)
