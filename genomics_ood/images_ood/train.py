@@ -22,6 +22,7 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import sys
 import json
 import os
 import time
@@ -74,8 +75,8 @@ flags.DEFINE_float('momentum2', 0.9995, 'Second momentum parameter (beta2) for'
                    'Adam optimizer.')
 flags.DEFINE_boolean('rescale_pixel_value', False,
                      'If True, rescale pixel values into [-1,1].')
-flags.DEFINE_boolean('deriv_constraint', False)
-flags.DEFINE_float('lambda_penalty', 1.0)
+flags.DEFINE_boolean('deriv_constraint', False, 'Whether to provide constraint that gradient at f(x) needs to be close to 0.')
+flags.DEFINE_float('lambda_penalty', 1.0, 'penalty term for derivative away from 0')
 
 FLAGS = flags.FLAGS
 
@@ -170,10 +171,17 @@ def main(unused_argv):
   log_prob_i = dist.log_prob(tr_in_im['image'], return_per_pixel=False)
   if FLAGS.deriv_constraint:
     img = tf.reshape(tr_in_im['image'], [tf.shape(tr_in_im['image'])[0], -1])
-    fx = tf.reduce_sum(tf.math.equal(img, 0), axis=1) / tf.shape(img)[1]
-    grad_fx = tf.gradients(log_prob_i, fx)[0]
-    print(tf.shape(grad_fx))
-    penalty = FLAGS.lambda_penalty * grad_fx
+    # proportion of zeros is not differentiable
+    # fx = tf.reduce_sum(tf.cast(tf.math.equal(img, 0), dtype=tf.int32), axis=1) / tf.shape(img)[1]
+    fx = tf.reduce_sum(img, axis=1)
+    grad_px_x = tf.gradients(log_prob_i, tr_in_im['image'])[0]
+    grad_px_x = tf.reshape(grad_px_x, [tf.shape(grad_px_x)[0], -1])
+    tf.print(grad_px_x, output_stream=sys.stdout)
+    grad_fx_x = tf.gradients(fx, img)[0]
+    tf.print(grad_fx_x, output_stream=sys.stdout)
+    tf.print(tf.shape(grad_fx_x), output_stream=sys.stdout)
+    tf.print(tf.shape(grad_fx_x), output_stream=sys.stdout)
+    penalty = FLAGS.lambda_penalty * tf.norm(grad_px_x / grad_fx_x, axis=1)
     log_prob_i = log_prob_i - penalty
   loss = -tf.reduce_mean(log_prob_i)
 
