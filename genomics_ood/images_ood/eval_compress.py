@@ -304,10 +304,8 @@ def main(unused_argv):
 
   preds0_in, preds0_ood = get_complexity(FLAGS.exp, FLAGS.data_dir, 'test', 'test')
   auc, auc_llr = compute_auc_llr(preds_in, preds_ood, preds0_in, preds0_ood)
-  if FLAGS.exp in ['fashion', 'mnist']:
-    zeros_in, zeros_ood = calculate_zeros(FLAGS.exp, FLAGS.data_dir)
-  else:
-    zeros_in, zeros_ood = calculate_complexity(FLAGS.exp, FLAGS.data_dir)
+  zeros_in = preds0_in
+  zeros_ood = preds0_ood
   plt.scatter(zeros_in, preds_in['log_probs'], color='blue', alpha=.2)
   plt.scatter(zeros_ood, preds_ood['log_probs'], color='red', alpha=.2)
   plt.title(FLAGS.exp + ' likelihood')
