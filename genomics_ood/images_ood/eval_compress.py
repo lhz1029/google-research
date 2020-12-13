@@ -219,8 +219,12 @@ def get_complexity(exp, data_dir, eval_mode_in, eval_mode_ood):
   ood_fnames = sorted(glob.glob(data_ood_path))
   preds0_in_bits = [os.stat(fname).st_size * 8 for fname in in_fnames]
   preds0_ood_bits = [os.stat(fname).st_size * 8 for fname in ood_fnames]
-  preds0_in = [math.log(2 ** bits) for bits in preds0_in_bits]
-  preds0_ood = [math.log(2 ** bits) for bits in preds0_ood_bits]
+  preds0_in = {}
+  preds0_ood = {}
+  preds0_in['labels'] = [math.log(2 ** bits) for bits in preds0_in_bits]
+  preds0_ood['labels'] = [math.log(2 ** bits) for bits in preds0_ood_bits]
+  preds0_in['log_probs'] = [math.log(2 ** bits) for bits in preds0_in_bits]
+  preds0_ood['log_probs'] = [math.log(2 ** bits) for bits in preds0_ood_bits]
   return preds0_in, preds0_ood
 
 def plot_heatmap(n, data, plt_file, colorbar=True):
@@ -304,8 +308,8 @@ def main(unused_argv):
 
   preds0_in, preds0_ood = get_complexity(FLAGS.exp, FLAGS.data_dir, 'test', 'test')
   auc, auc_llr = compute_auc_llr(preds_in, preds_ood, preds0_in, preds0_ood)
-  zeros_in = preds0_in
-  zeros_ood = preds0_ood
+  zeros_in = preds0_in['log_probs']
+  zeros_ood = preds0_ood['log_probs']
   plt.scatter(zeros_in, preds_in['log_probs'], color='blue', alpha=.2)
   plt.scatter(zeros_ood, preds_ood['log_probs'], color='red', alpha=.2)
   plt.title(FLAGS.exp + ' likelihood')
