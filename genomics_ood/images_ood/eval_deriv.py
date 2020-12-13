@@ -124,7 +124,8 @@ def load_data_and_model_and_pred(exp,
                                  mutation_rate,
                                  repeat_id,
                                  ckpt_step,
-                                 eval_mode,
+                                 eval_mode_in,
+                                 eval_mode_ood,
                                  return_per_pixel=False):
   """Load datasets, load model ckpt, and eval the model on the datasets."""
   tf.compat.v1.reset_default_graph()
@@ -141,23 +142,14 @@ def load_data_and_model_and_pred(exp,
 
   # Evaluations
   preds_in = utils.eval_on_data(
-      datasets['%s_in' % eval_mode],
+      datasets['%s_in' % eval_mode_in],
       utils.image_preprocess,
       params,
       dist,
       sess,
       return_per_pixel=return_per_pixel)
-  if eval_mode == 'val':
-    if exp in ['fashion', 'mnist']:
-      data = datasets['val_ood']
-    else:
-      data = datasets['val_in']
-  elif eval_mode == 'test':
-    data = datasets['test_ood']
-  else:
-    raise ValueError("Bad eval_mode: ", eval_mode)
   preds_ood = utils.eval_on_data(
-      data,
+      datasets['%s_ood' % eval_mode_ood],
       utils.image_preprocess,
       params,
       dist,
@@ -241,8 +233,10 @@ def calculate_zeros(exp, data_dir):
   img_ood = np.load(test_ood)
   img_in = img_in.reshape((img_in.shape[0], -1))
   img_ood = img_ood.reshape((img_ood.shape[0], -1))
-  zeros_in = (img_in == 0).sum(axis=1) / img_in.shape[1]
-  zeros_ood = (img_ood == 0).sum(axis=1) / img_ood.shape[1]
+  # zeros_in = (img_in == 0).sum(axis=1) / img_in.shape[1]
+  # zeros_ood = (img_ood == 0).sum(axis=1) / img_ood.shape[1]
+  zeros_in = np.mean(img_in, axis=1)
+  zeros_ood = np.mean(img_in, axis=1)
   return zeros_in, zeros_ood
 
 def calculate_complexity(exp, data_dir):
@@ -280,6 +274,7 @@ def main(unused_argv):
       0.0,
       FLAGS.repeat_id,
       FLAGS.ckpt_step,
+      'test',
       'test',
       return_per_pixel=True)
 
