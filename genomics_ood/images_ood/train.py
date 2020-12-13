@@ -202,10 +202,13 @@ def main(unused_argv):
 
   # write tensorflow summaries
   saver = tf.compat.v1.train.Saver(max_to_keep=50000)
-  merged_tr = tf.compat.v1.summary.merge([
+  summaries = [
       tf.compat.v1.summary.scalar('loss', loss),
       tf.compat.v1.summary.scalar('train/learning_rate', learning_rate)
-  ])
+  ]
+  if FLAGS.deriv_constraint:
+    summaries.append(tf.compat.v1.summary.scalar('penalty', tf.reduce_mean(penalty)))
+  merged_tr = tf.compat.v1.summary.merge(summaries)
   merged_val_in = tf.compat.v1.summary.merge(
       [tf.compat.v1.summary.scalar('loss', loss_val_in)])
   tr_writer = tf.compat.v1.summary.FileWriter(job_log_dir + '/tr_in',
