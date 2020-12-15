@@ -287,7 +287,7 @@ def main(unused_argv):
   plt.scatter(zeros_in, preds_in['log_probs'], color='blue', alpha=.2)
   plt.scatter(zeros_ood, preds_ood['log_probs'], color='red', alpha=.2)
   plt.title(FLAGS.exp + ' likelihood')
-  plt.savefig(FLAGS.exp + ' likelihood' + '.pdf', bbox_inches='tight')
+  plt.savefig(os.path.join(out_dir, FLAGS.exp + ' likelihood' + '.pdf'), bbox_inches='tight')
   plt.clf()
   print_and_write(out_f, 'final test, auc={}'.format(auc))
 
@@ -300,7 +300,7 @@ def main(unused_argv):
   plt.scatter(zeros_in, grad_in, color='blue', alpha=.2)
   plt.scatter(zeros_ood, grad_ood, color='red', alpha=.2)
   plt.title(FLAGS.exp + ' typicality')
-  plt.savefig(FLAGS.exp + ' typicality' + '.pdf', bbox_inches='tight')
+  plt.savefig(os.path.join(out_dir, FLAGS.exp + ' typicality' + '.pdf'), bbox_inches='tight')
   plt.clf()
   print_and_write(out_f, 'final test grad, auc={}'.format(grad_auc))
 

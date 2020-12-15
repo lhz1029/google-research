@@ -78,6 +78,8 @@ flags.DEFINE_boolean('rescale_pixel_value', False,
 flags.DEFINE_boolean('deriv_constraint', False, 'Whether to provide constraint that gradient at f(x) needs to be close to 0.')
 flags.DEFINE_float('lambda_penalty', 1.0, 'penalty term for derivative away from 0')
 
+flags.DEFINE_boolean('small_data', False, 'If true, train and validate on 5 data points')
+
 FLAGS = flags.FLAGS
 
 
@@ -141,6 +143,10 @@ def main(unused_argv):
     datasets = utils.load_mnist_datasets(FLAGS.data_dir)
   else:
     datasets = utils.load_cifar_datasets(FLAGS.data_dir)
+  
+  if FLAGS.small_data:
+    datasets['tr_in'] = datasets['tr_in'][:5]
+    datasets['val_in'] = datasets['val_in'][:5]
 
   # pylint: disable=g-long-lambda
   tr_in_ds = datasets['tr_in'].map(lambda x: utils.image_preprocess_add_noise(

@@ -122,7 +122,8 @@ def load_data_and_model_and_pred(exp,
                                  mutation_rate,
                                  repeat_id,
                                  ckpt_step,
-                                 eval_mode,
+                                 eval_mode_in,
+                                 eval_mode_ood,
                                  return_per_pixel=False):
   """Load datasets, load model ckpt, and eval the model on the datasets."""
   tf.compat.v1.reset_default_graph()
@@ -139,23 +140,14 @@ def load_data_and_model_and_pred(exp,
 
   # Evaluations
   preds_in = utils.eval_on_data(
-      datasets['%s_in' % eval_mode],
+      datasets['%s_in' % eval_mode_in],
       utils.image_preprocess,
       params,
       dist,
       sess,
       return_per_pixel=return_per_pixel)
-  if eval_mode == 'val':
-    if exp in ['fashion', 'mnist']:
-      data = datasets['val_ood']
-    else:
-      data = datasets['val_in']
-  elif eval_mode == 'test':
-    data = datasets['test_ood']
-  else:
-    raise ValueError("Bad eval_mode: ", eval_mode)
   preds_ood = utils.eval_on_data(
-      data,
+      datasets['%s_ood' % eval_mode_ood],
       utils.image_preprocess,
       params,
       dist,
@@ -261,7 +253,7 @@ def main(unused_argv):
   # foreground model
   preds_in, preds_ood, _, _ = load_data_and_model_and_pred(FLAGS.exp, FLAGS.data_dir,
                                                      0.0, 0.0, FLAGS.repeat_id,
-                                                     FLAGS.ckpt_step, 'val')
+                                                     FLAGS.ckpt_step, 'val', 'val')
 
   # background model
   auc_llr_reg_mr = np.zeros((len(REG_WEIGHT_LIST), len(MUTATION_RATE_LIST)))
@@ -269,7 +261,7 @@ def main(unused_argv):
     for mutation_rate in MUTATION_RATE_LIST:
       preds0_in, preds0_ood, _, _ = load_data_and_model_and_pred(
           FLAGS.exp, FLAGS.data_dir, reg_weight, mutation_rate, FLAGS.repeat_id,
-          FLAGS.ckpt_step, 'val')
+          FLAGS.ckpt_step, 'val', 'val')
       if not (preds0_in and preds0_ood):
         print('reg_weight={}, mutation_rate={}, ckpt not found, skip'.format(
             reg_weight, mutation_rate))
@@ -299,6 +291,7 @@ def main(unused_argv):
       FLAGS.repeat_id,
       FLAGS.ckpt_step,
       'test',
+      'test',
       return_per_pixel=True)
 
   # background model
@@ -310,18 +303,19 @@ def main(unused_argv):
       FLAGS.repeat_id,
       FLAGS.ckpt_step,
       'test',
+      'test',
       return_per_pixel=True)
   auc, auc_llr = compute_auc_llr(preds_in, preds_ood, preds0_in, preds0_ood)
   zeros_in, zeros_ood = calculate_zeros(FLAGS.exp, FLAGS.data_dir)
   plt.scatter(zeros_in, preds_in['log_probs'], color='blue', alpha=.2)
   plt.scatter(zeros_ood, preds_ood['log_probs'], color='red', alpha=.2)
   plt.title(FLAGS.exp + ' likelihood')
-  plt.savefig(FLAGS.exp + ' likelihood' + '.pdf', bbox_inches='tight')
+  plt.savefig(os.path.join(out_dir, FLAGS.exp + ' likelihood' + '.pdf'), bbox_inches='tight')
   plt.clf()
   plt.scatter(zeros_in, preds_in['log_probs'] - preds0_in['log_probs'], color='blue', alpha=.2)
   plt.scatter(zeros_ood, preds_ood['log_probs'] - preds0_ood['log_probs'], color='red', alpha=.2)
   plt.title(FLAGS.exp + ' llr')
-  plt.savefig(FLAGS.exp + ' llr' + '.pdf', bbox_inches='tight')
+  plt.savefig(os.path.join(out_dir, FLAGS.exp + ' llr' + '.pdf'), bbox_inches='tight')
   print_and_write(out_f, 'final test, auc={}, auc_llr={}'.format(auc, auc_llr))
   plt.clf()
 
@@ -335,12 +329,12 @@ def main(unused_argv):
   plt.scatter(zeros_in, grad_in, color='blue', alpha=.2)
   plt.scatter(zeros_ood, grad_ood, color='red', alpha=.2)
   plt.title(FLAGS.exp + ' typicality')
-  plt.savefig(FLAGS.exp + ' typicality' + '.pdf', bbox_inches='tight')
+  plt.savefig(os.path.join(out_dir, FLAGS.exp + ' typicality' + '.pdf'), bbox_inches='tight')
   plt.clf()
   plt.scatter(zeros_in, grad_in - grad0_in, color='blue', alpha=.2)
   plt.scatter(zeros_ood, grad_ood - grad0_ood, color='red', alpha=.2)
   plt.title(FLAGS.exp + ' typicality ratio')
-  plt.savefig(FLAGS.exp + ' typicality ratio' + '.pdf', bbox_inches='tight')
+  plt.savefig(os.path.join(out_dir, FLAGS.exp + ' typicality ratio' + '.pdf'), bbox_inches='tight')
   print_and_write(out_f, 'final test grad, auc={}, auc_llr={}'.format(grad_auc, grad_auc_llr))
 
   out_f.close()
