@@ -172,16 +172,19 @@ def main(unused_argv):
   if FLAGS.deriv_constraint:
     img = tf.reshape(tr_in_im['image'], [tf.shape(tr_in_im['image'])[0], -1])
     # proportion of zeros is not differentiable
-    # fx = tf.reduce_sum(tf.cast(tf.math.equal(img, 0), dtype=tf.int32), axis=1) / tf.shape(img)[1]
-    fx = tf.reduce_sum(img, axis=1)
+    fx = tf.reduce_sum(tf.cast(tf.math.equal(img, 0), dtype=tf.int32), axis=1) / tf.shape(img)[1]
+    # fx = tf.reduce_sum(img, axis=1)
     grad_px_x = tf.gradients(log_prob_i, tr_in_im['image'])[0]
     grad_px_x = tf.reshape(grad_px_x, [tf.shape(grad_px_x)[0], -1])
     tf.print(grad_px_x, output_stream=sys.stdout)
-    grad_fx_x = tf.gradients(fx, img)[0]
+    # grad_fx_x = tf.gradients(fx, img)[0]
+    # pseudo-gradient is -1 at 0 and 1 at 1
+    grad_fx_x = -1 * tf.cast(tf.math.equal(img, 0), dtype=tf.int32) / tf.shape(img)[1] +  tf.cast(tf.math.greater(img, 0), dtype=tf.int32) / tf.shape(img)[1]
+    print(grad_fx_x)
     tf.print(grad_fx_x, output_stream=sys.stdout)
     tf.print(tf.shape(grad_fx_x), output_stream=sys.stdout)
     tf.print(tf.shape(grad_fx_x), output_stream=sys.stdout)
-    penalty = FLAGS.lambda_penalty * tf.norm(grad_px_x / grad_fx_x, axis=1)
+    penalty = FLAGS.lambda_penalty * tf.norm(grad_px_x / tf.cast(grad_fx_x, dtype=tf.float32), axis=1)
     log_prob_i = log_prob_i - penalty
   loss = -tf.reduce_mean(log_prob_i)
 

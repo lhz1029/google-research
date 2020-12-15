@@ -233,10 +233,10 @@ def calculate_zeros(exp, data_dir):
   img_ood = np.load(test_ood)
   img_in = img_in.reshape((img_in.shape[0], -1))
   img_ood = img_ood.reshape((img_ood.shape[0], -1))
-  # zeros_in = (img_in == 0).sum(axis=1) / img_in.shape[1]
-  # zeros_ood = (img_ood == 0).sum(axis=1) / img_ood.shape[1]
-  zeros_in = np.mean(img_in, axis=1)
-  zeros_ood = np.mean(img_in, axis=1)
+  zeros_in = (img_in == 0).sum(axis=1) / img_in.shape[1]
+  zeros_ood = (img_ood == 0).sum(axis=1) / img_ood.shape[1]
+  # zeros_in = np.mean(img_in, axis=1)
+  # zeros_ood = np.mean(img_in, axis=1)
   return zeros_in, zeros_ood
 
 def calculate_complexity(exp, data_dir):

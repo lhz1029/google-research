@@ -174,8 +174,9 @@ def load_data_and_model_and_pred(exp,
 def compute_auc_llr(preds_in, preds_ood, preds0_in, preds0_ood):
   """Compute AUC for LLR."""
   # check if samples are in the same order
-  assert np.array_equal(preds_in['labels'], preds0_in['labels'])
-  assert np.array_equal(preds_ood['labels'], preds0_ood['labels'])
+  # print(len(preds_in['labels']), len(preds0_in['labels']))
+  # assert np.array_equal(preds_in['labels'], preds0_in['labels'])
+  # assert np.array_equal(preds_ood['labels'], preds0_ood['labels'])
 
   # evaluate AUROC for OOD detection
   auc = utils.compute_auc(
@@ -221,10 +222,8 @@ def get_complexity(exp, data_dir, eval_mode_in, eval_mode_ood):
   preds0_ood_bits = [os.stat(fname).st_size * 8 for fname in ood_fnames]
   preds0_in = {}
   preds0_ood = {}
-  preds0_in['labels'] = [math.log(2 ** bits) for bits in preds0_in_bits]
-  preds0_ood['labels'] = [math.log(2 ** bits) for bits in preds0_ood_bits]
-  preds0_in['log_probs'] = [math.log(2 ** bits) for bits in preds0_in_bits]
-  preds0_ood['log_probs'] = [math.log(2 ** bits) for bits in preds0_ood_bits]
+  preds0_in['log_probs'] = [-math.log(2) * bits for bits in preds0_in_bits]
+  preds0_ood['log_probs'] = [-math.log(2) * bits for bits in preds0_ood_bits]
   return preds0_in, preds0_ood
 
 def plot_heatmap(n, data, plt_file, colorbar=True):
@@ -307,6 +306,10 @@ def main(unused_argv):
       return_per_pixel=True)
 
   preds0_in, preds0_ood = get_complexity(FLAGS.exp, FLAGS.data_dir, 'test', 'test')
+  np.save('preds0_in', preds0_in)
+  np.save('preds0_ood', preds0_ood)
+  np.save('preds_in', preds_in)
+  np.save('preds_ood', preds_ood)
   auc, auc_llr = compute_auc_llr(preds_in, preds_ood, preds0_in, preds0_ood)
   zeros_in = preds0_in['log_probs']
   zeros_ood = preds0_ood['log_probs']
@@ -315,14 +318,20 @@ def main(unused_argv):
   plt.title(FLAGS.exp + ' likelihood')
   plt.savefig(FLAGS.exp + ' likelihood' + '.pdf', bbox_inches='tight')
   plt.clf()
-  print_and_write(out_f, 'final test, auc={}'.format(auc))
+  plt.scatter(zeros_in, preds_in['log_probs'] - preds0_in['log_probs'], color='blue', alpha=.2)
+  plt.scatter(zeros_ood, preds_ood['log_probs'] - preds0_ood['log_probs'], color='red', alpha=.2)
+  plt.title(FLAGS.exp + ' llr')
+  plt.savefig(FLAGS.exp + ' llr' + '.pdf', bbox_inches='tight')
+  print_and_write(out_f, 'final test, auc={}, auc_llr={}'.format(auc, auc_llr))
+  plt.clf()
+  print_and_write(out_f, 'final test, auc={}, auc_llr={}'.format(auc, auc_llr))
 
   # typicality approximation
   grad_in = grad_in.reshape((-1))
   grad_ood = grad_ood.reshape((-1))
   grad_auc = utils.compute_auc(
       grad_in, grad_ood, pos_label=0)
-  print(zeros_in.shape, grad_in.shape)
+  # print(zeros_in.shape, grad_in.shape)
   plt.scatter(zeros_in, grad_in, color='blue', alpha=.2)
   plt.scatter(zeros_ood, grad_ood, color='red', alpha=.2)
   plt.title(FLAGS.exp + ' typicality')
