@@ -31,6 +31,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
 import tensorflow.compat.v1 as tf
+from matplotlib.lines import Line2D
 
 from genomics_ood.images_ood import pixel_cnn
 from genomics_ood.images_ood import utils
@@ -48,7 +49,7 @@ flags.DEFINE_integer(
     ('We run 10 independent experiments to get the mean and variance of AUROC.',
      'repeat_id=i indicates the i-th independent run.',
      'repeat_id=-1 indecates only one independent run.'))
-
+flags.DEFINE_boolean('color_classes', False, 'whether to color by class (only for fashion mnist and mnist)')
 FLAGS = flags.FLAGS
 
 REG_WEIGHT_LIST = [0, 10, 100]
@@ -220,24 +221,41 @@ def plot_heatmap(n, data, plt_file, colorbar=True):
   with tf.gfile.Open(plt_file, 'wb') as sp:
     plt.savefig(sp, format='pdf', bbox_inches='tight')
 
-def calculate_zeros(exp, data_dir):
+def calculate_zeros(exp, data_dir, eval_mode_in='test', eval_mode_ood='test'):
+  eval_mode_in = 'train' if eval_mode_in == 'tr' else eval_mode_in
+  eval_mode_ood = 'train' if eval_mode_ood == 'tr' else eval_mode_ood
   if exp == 'fashion':
-    test_in = os.path.join(data_dir, 'fashion_mnist_test.npy')
-    test_ood = os.path.join(data_dir, 'mnist_test.npy')
+    test_in = os.path.join(data_dir, f'fashion_mnist_{eval_mode_in}.npy')
+    test_ood = os.path.join(data_dir, f'mnist_{eval_mode_ood}.npy')
+    print(eval_mode_ood)
   elif exp == 'mnist':
-    test_in = os.path.join(data_dir, 'mnist_test.npy')
-    test_ood = os.path.join(data_dir, 'fashion_mnist_test.npy')
+    test_in = os.path.join(data_dir, f'mnist_{eval_mode_in}.npy')
+    test_ood = os.path.join(data_dir, f'fashion_mnist_{eval_mode_ood}.npy')
   else:
     raise ValueError("exp not supported: ", exp)
   img_in = np.load(test_in)
   img_ood = np.load(test_ood)
+  print(img_ood.shape)
   img_in = img_in.reshape((img_in.shape[0], -1))
   img_ood = img_ood.reshape((img_ood.shape[0], -1))
   zeros_in = (img_in == 0).sum(axis=1) / img_in.shape[1]
   zeros_ood = (img_ood == 0).sum(axis=1) / img_ood.shape[1]
   # zeros_in = np.mean(img_in, axis=1)
-  # zeros_ood = np.mean(img_in, axis=1)
+  # zeros_ood = np.mean(img_ood, axis=1)
   return zeros_in, zeros_ood
+
+def get_classes(exp, data_dir):
+  if exp == 'fashion':
+    in_name = 'fashion_mnist'
+    ood_name = 'mnist'
+  elif exp == 'mnist':
+    in_name = 'mnist'
+    ood_name = 'fashion_mnist'
+  else:
+    raise ValueError('bad exp')
+  in_classes = np.load(os.path.join(data_dir, in_name + '_labels1.npy'))
+  ood_classes = np.load(os.path.join(data_dir, ood_name + '_labels1.npy'))
+  return in_classes, ood_classes
 
 def calculate_complexity(exp, data_dir):
   if exp == 'fashion':
@@ -274,22 +292,57 @@ def main(unused_argv):
       0.0,
       FLAGS.repeat_id,
       FLAGS.ckpt_step,
-      'test',
-      'test',
+      'test1',
+      'test1',
       return_per_pixel=True)
 
   auc = utils.compute_auc(
       preds_in['log_probs'], preds_ood['log_probs'], pos_label=0)
   if FLAGS.exp in ['fashion', 'mnist']:
-    zeros_in, zeros_ood = calculate_zeros(FLAGS.exp, FLAGS.data_dir)
+    zeros_in, zeros_ood = calculate_zeros(FLAGS.exp, FLAGS.data_dir, 'test1', 'test1')
   else:
     zeros_in, zeros_ood = calculate_complexity(FLAGS.exp, FLAGS.data_dir)
+  print(len(zeros_ood), len(preds_ood['log_probs']))
   plt.scatter(zeros_in, preds_in['log_probs'], color='blue', alpha=.2)
   plt.scatter(zeros_ood, preds_ood['log_probs'], color='red', alpha=.2)
   plt.title(FLAGS.exp + ' likelihood')
   plt.savefig(os.path.join(out_dir, FLAGS.exp + ' likelihood' + '.pdf'), bbox_inches='tight')
   plt.clf()
   print_and_write(out_f, 'final test, auc={}'.format(auc))
+  if FLAGS.color_classes:
+    def to_labels(in_classes, ood_classes, exp):
+        fashion_dict = {0: 'tshirt', 1: 'trouser', 2: 'pullover', 3:'dress', 4: 'coat', 5:'sandal', 6:'shirt', 7:'sneaker', 8:'bag', 9:'ankle_boot'}
+        mnist_dict = {k: str(k) for k in range(10)}
+        if exp == 'fashion':
+            in_dict = fashion_dict
+            ood_dict = mnist_dict
+        elif exp == 'mnist':
+            in_dict = mnist_dict
+            ood_dict = fashion_dict
+        else:
+            raise ValueError('bad exp')
+        # in_labels = [in_dict[i] for i in in_classes]
+        # ood_labels = [ood_dict[i] for i in ood_classes]
+        return in_labels, ood_labels
+    in_classes, ood_classes = get_classes(FLAGS.exp, FLAGS.data_dir)
+    plt.scatter(zeros_in, preds_in['log_probs'], c=in_classes, cmap='Pastel2', alpha=.2)
+    plt.scatter(zeros_ood, preds_ood['log_probs'], c=ood_classes, cmap='Dark2', alpha=.2)
+  else:
+    plt.scatter(zeros_in, preds_in['log_probs'], color='blue', alpha=.2)
+    plt.scatter(zeros_ood, preds_ood['log_probs'], color='red', alpha=.2)
+  plt.title(FLAGS.exp + ' likelihood')
+  lines_in = [Line2D([0], [0], color=plt.cm.Pastel2(i)) for i in range(10)]
+  lines_ood = [Line2D([0], [0], color=plt.cm.Dark2(i)) for i in range(10)]
+  lines = lines_in + lines_ood
+  fashion_labels = ['tshirt', 'trouser', 'pullover', 'dress', 'coat', 'sandal', 'shirt', 'sneaker', 'bag', 'ankle_boot']
+  mnist_labels = list(range(10))
+  if FLAGS.exp == 'fashion':
+    labels = fashion_labels + mnist_labels
+  elif FLAGS.exp == 'mnist':
+    labels = mnist_labels + fashion_labels
+  plt.legend(lines, labels)
+  plt.savefig(os.path.join(out_dir, FLAGS.exp + ' likelihood colored.pdf'), bbox_inches='tight')
+  plt.clf()
 
   # typicality approximation
   grad_in = grad_in.reshape((-1))

@@ -29,9 +29,14 @@ import yaml
 
 
 def load_tfdata_from_np(np_file):
-  with tf.compat.v1.gfile.Open(np_file, mode='rb') as f:
-    images = np.load(f)
-    labels = np.load(f)
+  try:
+    with tf.compat.v1.gfile.Open(np_file, mode='rb') as f:
+      images = np.load(f)
+      labels = np.load(f)
+  except ValueError:
+    print('tf open failed')
+    images = np.load(np_file)
+    labels = images
   dataset = tf.compat.v1.data.Dataset.from_tensor_slices(
       (images, labels)).map(tensor_slices_preprocess)
   return dataset
@@ -43,16 +48,19 @@ def load_fmnist_datasets(data_dir):
   val_in = load_tfdata_from_np(os.path.join(data_dir, 'fashion_mnist_val.npy'))
   test_in = load_tfdata_from_np(
       os.path.join(data_dir, 'fashion_mnist_test.npy'))
+  test1_in = load_tfdata_from_np(os.path.join(data_dir, 'fashion_mnist_test1.npy'))
 
   val_ood = load_tfdata_from_np(os.path.join(data_dir, 'notmnist.npy'))
   test_ood = load_tfdata_from_np(os.path.join(data_dir, 'mnist_test.npy'))
-
+  test1_ood = load_tfdata_from_np(os.path.join(data_dir, 'mnist_test1.npy'))
   return {
       'tr_in': tr_in,
       'val_in': val_in,
       'test_in': test_in,
+      'test1_in': test1_in,
       'val_ood': val_ood,
-      'test_ood': test_ood
+      'test_ood': test_ood,
+      'test1_ood': test1_ood
   }
 
 def load_mnist_datasets(data_dir):
@@ -61,16 +69,19 @@ def load_mnist_datasets(data_dir):
   val_in = load_tfdata_from_np(os.path.join(data_dir, 'mnist_val.npy'))
   test_in = load_tfdata_from_np(
       os.path.join(data_dir, 'mnist_test.npy'))
+  test1_in = load_tfdata_from_np(os.path.join(data_dir, 'mnist_test1.npy'))
 
   val_ood = load_tfdata_from_np(os.path.join(data_dir, 'notmnist.npy'))
   test_ood = load_tfdata_from_np(os.path.join(data_dir, 'fashion_mnist_test.npy'))
-
+  test1_ood = load_tfdata_from_np(os.path.join(data_dir, 'fashion_mnist_test1.npy'))
   return {
       'tr_in': tr_in,
       'val_in': val_in,
       'test_in': test_in,
+      'test1_in': test1_in,
       'val_ood': val_ood,
-      'test_ood': test_ood
+      'test_ood': test_ood,
+      'test1_ood': test1_ood
   }
 
 

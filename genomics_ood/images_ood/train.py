@@ -30,6 +30,7 @@ import time
 from absl import app
 from absl import flags
 import tensorflow.compat.v1 as tf
+import tensorflow_probability as tfp
 
 from genomics_ood.images_ood import pixel_cnn
 from genomics_ood.images_ood import utils
@@ -77,7 +78,7 @@ flags.DEFINE_boolean('rescale_pixel_value', False,
                      'If True, rescale pixel values into [-1,1].')
 flags.DEFINE_boolean('deriv_constraint', False, 'Whether to provide constraint that gradient at f(x) needs to be close to 0.')
 flags.DEFINE_float('lambda_penalty', 1.0, 'penalty term for derivative away from 0')
-
+flags.DEFINE_boolean('corr_constraint', False, 'Whether to provide constraint that correlation be 0')
 flags.DEFINE_boolean('small_data', False, 'If true, train and validate on 5 data points')
 
 FLAGS = flags.FLAGS
@@ -180,7 +181,7 @@ def main(unused_argv):
     # proportion of zeros is not differentiable
     fx = tf.reduce_sum(tf.cast(tf.math.equal(img, 0), dtype=tf.int32), axis=1) / tf.shape(img)[1]
     # fx = tf.reduce_sum(img, axis=1)
-    grad_px_x = tf.gradients(log_prob_i, tr_in_im['image'])[0]
+    grad_px_x = tf.gradients(tf.math.exp(log_prob_i), tr_in_im['image'])[0]
     grad_px_x = tf.reshape(grad_px_x, [tf.shape(grad_px_x)[0], -1])
     tf.print(grad_px_x, output_stream=sys.stdout)
     # grad_fx_x = tf.gradients(fx, img)[0]
@@ -191,6 +192,12 @@ def main(unused_argv):
     tf.print(tf.shape(grad_fx_x), output_stream=sys.stdout)
     tf.print(tf.shape(grad_fx_x), output_stream=sys.stdout)
     penalty = FLAGS.lambda_penalty * tf.norm(grad_px_x / tf.cast(grad_fx_x, dtype=tf.float32), axis=1)
+    log_prob_i = log_prob_i - penalty
+  if FLAGS.corr_constraint:
+    img = tf.reshape(tr_in_im['image'], [tf.shape(tr_in_im['image'])[0], -1])
+    fx = tf.reduce_sum(tf.cast(tf.math.equal(img, 0), dtype=tf.int32), axis=1) / tf.shape(img)[1]
+    corr_px_fx = tfp.stats.correlation(tf.cast(log_prob_i, tf.float32), tf.cast(fx, tf.float32), sample_axis=0, event_axis=None)
+    penalty = FLAGS.lambda_penalty * tf.math.abs(corr_px_fx)
     log_prob_i = log_prob_i - penalty
   loss = -tf.reduce_mean(log_prob_i)
 
@@ -215,7 +222,7 @@ def main(unused_argv):
       tf.compat.v1.summary.scalar('loss', loss),
       tf.compat.v1.summary.scalar('train/learning_rate', learning_rate)
   ]
-  if FLAGS.deriv_constraint:
+  if FLAGS.deriv_constraint or FLAGS.corr_constraint:
     summaries.append(tf.compat.v1.summary.scalar('penalty', tf.reduce_mean(penalty)))
   merged_tr = tf.compat.v1.summary.merge(summaries)
   merged_val_in = tf.compat.v1.summary.merge(
