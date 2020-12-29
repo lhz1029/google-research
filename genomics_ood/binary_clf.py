@@ -143,8 +143,11 @@ def load_datasets_and_labels(params, mode_eval=False):
           lambda v: change_labels(utils.parse_single_tfexample(v, v), 0))
     in_tr_dataset_q = tf.data.TFRecordDataset(in_tr_data_file_list).map(
           lambda v: change_labels(parse_single_tfexample_addmutations_short(v, v), 1))
-        
-    in_tr_dataset = in_tr_dataset_p.concatenate(in_tr_dataset_q)
+
+    choice_dataset = tf.data.Dataset.range(2).repeat()
+    in_tr_dataset = tf.contrib.data.choose_from_datasets(
+      [in_tr_dataset_p, in_tr_dataset_q], choice_dataset)
+    # in_tr_dataset = in_tr_dataset_q.concatenate(in_tr_dataset_p)
 
   # in-distribution validation
   in_val_data_file_list = [
@@ -337,6 +340,10 @@ class SeqPredModel(object):
       _, in_tr_loss, in_tr_acc, in_tr_summary = self.sess.run(
           [self.minimize, self.loss, self.acc, self.summary],
           feed_dict={self.handle: self.in_tr_handle})
+      
+      probs, y = self.sess.run(
+          [self.probs, self.y],
+          feed_dict={self.handle: self.in_tr_handle})
 
       if i % self._params.val_freq == 0:
         # self.sess.run(val_iterator.initializer)
@@ -347,9 +354,8 @@ class SeqPredModel(object):
         ood_val_probs = self.sess.run(
             self.probs, feed_dict={self.handle: self.ood_val_handle})
 
-        # auc using max(p(y|x)), smaller for OOD
-        neg = np.max(in_val_probs, axis=1)
-        pos = np.max(ood_val_probs, axis=1)
+        neg = in_val_probs[:, 1]
+        pos = ood_val_probs[:, 1]
         auc = roc_auc_score([1] * neg.shape[0] + [0] * pos.shape[0],
                             np.concatenate((neg, pos), axis=0))
 
