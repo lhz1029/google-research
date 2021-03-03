@@ -80,6 +80,8 @@ flags.DEFINE_boolean('deriv_constraint', False, 'Whether to provide constraint t
 flags.DEFINE_float('lambda_penalty', 1.0, 'penalty term for derivative away from 0')
 flags.DEFINE_boolean('corr_constraint', False, 'Whether to provide constraint that correlation be 0')
 flags.DEFINE_boolean('small_data', False, 'If true, train and validate on 5 data points')
+flags.DEFINE_boolean('wasserstein', False, 'If true, train and validate on 5 data points')
+flags.DEFINE_integer('wnorm', 1, 'wasserstein norm')
 
 FLAGS = flags.FLAGS
 
@@ -175,34 +177,61 @@ def main(unused_argv):
   )
 
   # Define the training loss and optimizer
-  log_prob_i = dist.log_prob(tr_in_im['image'], return_per_pixel=False)
-  if FLAGS.deriv_constraint:
-    img = tf.reshape(tr_in_im['image'], [tf.shape(tr_in_im['image'])[0], -1])
-    # proportion of zeros is not differentiable
-    fx = tf.reduce_sum(tf.cast(tf.math.equal(img, 0), dtype=tf.int32), axis=1) / tf.shape(img)[1]
-    # fx = tf.reduce_sum(img, axis=1)
-    grad_px_x = tf.gradients(tf.math.exp(log_prob_i), tr_in_im['image'])[0]
-    grad_px_x = tf.reshape(grad_px_x, [tf.shape(grad_px_x)[0], -1])
-    tf.print(grad_px_x, output_stream=sys.stdout)
-    # grad_fx_x = tf.gradients(fx, img)[0]
-    # pseudo-gradient is -1 at 0 and 1 at 1
-    grad_fx_x = -1 * tf.cast(tf.math.equal(img, 0), dtype=tf.int32) / tf.shape(img)[1] +  tf.cast(tf.math.greater(img, 0), dtype=tf.int32) / tf.shape(img)[1]
-    print(grad_fx_x)
-    tf.print(grad_fx_x, output_stream=sys.stdout)
-    tf.print(tf.shape(grad_fx_x), output_stream=sys.stdout)
-    tf.print(tf.shape(grad_fx_x), output_stream=sys.stdout)
-    penalty = FLAGS.lambda_penalty * tf.norm(grad_px_x / tf.cast(grad_fx_x, dtype=tf.float32), axis=1)
-    log_prob_i = log_prob_i - penalty
-  if FLAGS.corr_constraint:
-    img = tf.reshape(tr_in_im['image'], [tf.shape(tr_in_im['image'])[0], -1])
-    fx = tf.reduce_sum(tf.cast(tf.math.equal(img, 0), dtype=tf.int32), axis=1) / tf.shape(img)[1]
-    corr_px_fx = tfp.stats.correlation(tf.cast(log_prob_i, tf.float32), tf.cast(fx, tf.float32), sample_axis=0, event_axis=None)
-    penalty = FLAGS.lambda_penalty * tf.math.abs(corr_px_fx)
-    log_prob_i = log_prob_i - penalty
-  loss = -tf.reduce_mean(log_prob_i)
+  
+  if FLAGS.wasserstein:
+    # log_prob_i = dist.log_prob(tr_in_im['image'], return_per_pixel=True)  
+    mins, maxes = dist.log_prob(tr_in_im['image'], return_per_pixel=True, dist_family='uniform', wasserstein=True)
+    if FLAGS.exp == 'fashion':
+      mins = tf.squeeze(mins, [-1])  # (B,H,W,1)
+      maxes = tf.squeeze(maxes, [-1])
+    elif FLAGS.exp == 'cifar':
+      pass
+    else:
+      raise ValueError("Unsupported experiment: ", FLAGS.exp)
+    mins = tf.maximum(mins, tf.zeros_like(mins))
+    maxes = tf.minimum(maxes, tf.ones_like(maxes) * 255)
+    mins = tf.Print(mins, [tf.reduce_min(mins), tf.reduce_max(mins), tf.reduce_min(maxes), tf.reduce_max(maxes), tf.reduce_min(tr_in_im['image']), tf.reduce_max(tr_in_im['image'])], summarize=10)
+    loss = utils.emd(mins, maxes, tr_in_im['image'], FLAGS.lambda_penalty, FLAGS.wnorm)
 
-  log_prob_i_val_in = dist.log_prob(val_in_im['image'])
-  loss_val_in = -tf.reduce_mean(log_prob_i_val_in)
+    val_mins, val_maxes = dist.log_prob(val_in_im['image'], return_per_pixel=True, dist_family='uniform', wasserstein=True)
+    if FLAGS.exp == 'fashion':
+      val_mins = tf.squeeze(val_mins, [-1])
+      val_maxes = tf.squeeze(val_maxes, [-1])
+    elif FLAGS.exp == 'cifar':
+      pass
+    else:
+      raise ValueError("Unsupported experiment: ", FLAGS.exp)
+    # val_mins = tf.Print(val_mins, [tf.reduce_min(val_mins), tf.reduce_max(val_mins), tf.reduce_min(val_maxes), tf.reduce_max(val_maxes), tf.reduce_min(val_in_im['image']), tf.reduce_max(val_in_im['image'])], summarize=10)
+    loss_val_in = utils.emd(val_mins, val_maxes, val_in_im['image'], FLAGS.lambda_penalty, FLAGS.wnorm)
+  else:
+    log_prob_i = dist.log_prob(tr_in_im['image'], return_per_pixel=False)
+    if FLAGS.deriv_constraint:
+        img = tf.reshape(tr_in_im['image'], [tf.shape(tr_in_im['image'])[0], -1])
+        # proportion of zeros is not differentiable
+        fx = tf.reduce_sum(tf.cast(tf.math.equal(img, 0), dtype=tf.int32), axis=1) / tf.shape(img)[1]
+        # fx = tf.reduce_sum(img, axis=1)
+        grad_px_x = tf.gradients(tf.math.exp(log_prob_i), tr_in_im['image'])[0]
+        grad_px_x = tf.reshape(grad_px_x, [tf.shape(grad_px_x)[0], -1])
+        tf.print(grad_px_x, output_stream=sys.stdout)
+        # grad_fx_x = tf.gradients(fx, img)[0]
+        # pseudo-gradient is -1 at 0 and 1 at 1
+        grad_fx_x = -1 * tf.cast(tf.math.equal(img, 0), dtype=tf.int32) / tf.shape(img)[1] +  tf.cast(tf.math.greater(img, 0), dtype=tf.int32) / tf.shape(img)[1]
+        print(grad_fx_x)
+        tf.print(grad_fx_x, output_stream=sys.stdout)
+        tf.print(tf.shape(grad_fx_x), output_stream=sys.stdout)
+        tf.print(tf.shape(grad_fx_x), output_stream=sys.stdout)
+        penalty = FLAGS.lambda_penalty * tf.norm(grad_px_x / tf.cast(grad_fx_x, dtype=tf.float32), axis=1)
+        log_prob_i = log_prob_i - penalty
+    if FLAGS.corr_constraint:
+        img = tf.reshape(tr_in_im['image'], [tf.shape(tr_in_im['image'])[0], -1])
+        fx = tf.reduce_sum(tf.cast(tf.math.equal(img, 0), dtype=tf.int32), axis=1) / tf.shape(img)[1]
+        corr_px_fx = tfp.stats.correlation(tf.cast(log_prob_i, tf.float32), tf.cast(fx, tf.float32), sample_axis=0, event_axis=None)
+        penalty = FLAGS.lambda_penalty * tf.math.abs(corr_px_fx)
+        log_prob_i = log_prob_i - penalty
+    loss = -tf.reduce_mean(log_prob_i)
+
+    log_prob_i_val_in = dist.log_prob(val_in_im['image'])
+    loss_val_in = -tf.reduce_mean(log_prob_i_val_in)
 
   global_step = tf.compat.v1.train.get_or_create_global_step()
   learning_rate = tf.compat.v1.train.exponential_decay(
@@ -261,7 +290,9 @@ def main(unused_argv):
 
         print('step=%d, tr_in_loss=%.4f, val_in_loss=%.4f' %
               (step, loss_tr_np, loss_val_in_np))
-
+        import numpy as np
+        if np.isnan(loss_tr_np) or np.isnan(loss_val_in_np):
+          import sys; sys.exit()
         tr_writer.flush()
         val_in_writer.flush()
 

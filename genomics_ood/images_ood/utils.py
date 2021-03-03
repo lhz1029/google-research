@@ -164,7 +164,11 @@ def image_preprocess_grey(x):  # used for generate CIFAR-grey
 
 
 def compute_auc(neg, pos, pos_label=1):
+  np.save('neg.npy', neg)
+  np.save('pos.npy', pos)
   ys = np.concatenate((np.zeros(len(neg)), np.ones(len(pos))), axis=0)
+  neg = np.nan_to_num(neg)
+  pos = np.nan_to_num(pos)
   neg = np.array(neg)[np.logical_not(np.isnan(neg))]
   pos = np.array(pos)[np.logical_not(np.isnan(pos))]
   scores = np.concatenate((neg, pos), axis=0)
@@ -176,6 +180,12 @@ def compute_auc(neg, pos, pos_label=1):
 
 
 def get_ckpt_at_step(tr_model_dir, step):
+  import glob
+  if step == -1:
+    fnames = glob.glob(os.path.join(tr_model_dir, 'model_step*.ckpt.index'))
+    steps = [int(f.split('step')[1].split('.')[0]) for f in fnames]
+    step = max(steps)
+    print('step', step)
   pattern = 'model_step{}.ckpt.index'.format(step)
   list_of_ckpt = tf.compat.v1.gfile.Glob(os.path.join(tr_model_dir, pattern))
   if list_of_ckpt:
@@ -201,14 +211,18 @@ def eval_on_data(data,
                  params,
                  dist,
                  sess,
-                 return_per_pixel=False):
+                 return_per_pixel=False,
+                 wasserstein=False):
   """predict for data and save log_prob to npy."""
 
   data_ds = data.map(preprocess_fn).batch(
       params['batch_size']).make_one_shot_iterator()
   data_im = data_ds.get_next()
 
-  log_prob = dist.log_prob(data_im['image'], return_per_pixel=return_per_pixel)
+  if wasserstein:
+    log_prob = dist.log_prob(data_im['image'], return_per_pixel=return_per_pixel, dist_family='uniform')
+  else:  
+    log_prob = dist.log_prob(data_im['image'], return_per_pixel=return_per_pixel)
   # log_prob = dist.log_prob(data_im['image'], return_per_pixel=return_per_pixel)
   # image = tf.placeholder(tf.float32, shape=dist.image_shape)
   gradients = tf.gradients(log_prob, data_im['image'])[0]
@@ -217,17 +231,21 @@ def eval_on_data(data,
   label_i_list = []
   image_i_list = []
   grad_i_list = []
+  locs_list = []
+  scales_list = []
 
   # eval on dataset
   while True:
     try:
       label, img = data_im['label'], data_im['image']
-      log_prob_np, label_np, image_np, grad_norm_np = sess.run(
-        [log_prob, label, img, grad_norm])
+      log_prob_np, label_np, image_np, grad_norm_np, locs_np, scales_np = sess.run(
+        [log_prob, label, img, grad_norm, dist.locs, dist.scales])
       grad_i_list.append(grad_norm_np)
       log_prob_i_list.append(np.expand_dims(log_prob_np, axis=-1))
       label_i_list += list(label_np.reshape(-1))
       image_i_list.append(image_np)
+      locs_list.append(locs_np)
+      scales_list.append(scales_np)
 
     except tf.errors.OutOfRangeError:
       break
@@ -239,7 +257,49 @@ def eval_on_data(data,
   label_i_np = np.array(label_i_list)
   image_i_np = np.squeeze(np.vstack(image_i_list)).reshape(
       -1, params['n_dim'], params['n_dim'], params['n_channel'])
-  out = {'log_probs': log_prob_i_np, 'labels': label_i_np, 'images': image_i_np, 'grads': grad_i_np}
+  out = {
+    'log_probs': log_prob_i_np, 'labels': label_i_np, 'images': image_i_np, 'grads': grad_i_np,
+    'locs': locs_list, 'scales': scales_list
+  }
   if return_per_pixel:
     out['log_probs_per_pixel'] = np.squeeze(log_prob_i_t_np)
   return out
+
+def emd(mins, maxes, label, penalty=100, norm=1, per_image=False):
+  # if norm == 1:
+  #   loss = tf.math.abs(mins - label) + tf.math.abs(maxes - label)
+  # elif norm == 2:
+  #   loss = tf.math.square(mins - label) + tf.math.square(maxes - label)
+  # # return tf.reduce_sum(loss)
+  # penalty_mask = tf.where(tf.math.logical_and(
+  #   tf.math.less(label, tf.maximum(mins, maxes)), tf.math.greater(label, tf.minimum(mins, maxes))
+  # ), tf.zeros_like(label), tf.ones_like(label))
+  # return tf.reduce_sum(loss + penalty * penalty_mask)
+  if norm == 0:
+    loss = tf.math.abs(label - tf.math.divide(mins + maxes, 2))
+  if norm == 1:
+    loss_outside = tf.math.abs(mins - label) + tf.math.abs(maxes - label)
+    loss_inside = [tf.math.square(label) - tf.math.multiply(label, (mins + maxes)) + tf.math.divide(tf.math.square(mins) + tf.math.square(maxes), 2)]
+    loss_inside = tf.Print(loss_inside, [tf.shape(loss_inside), tf.shape(loss_outside)], "before")
+    loss_inside = tf.math.divide(loss_inside, tf.math.abs(maxes - mins))
+    loss_inside = tf.Print(loss_inside, [tf.shape(loss_inside), tf.shape(loss_outside)], "after")
+    loss = tf.where(
+      tf.math.logical_and(
+        tf.math.less(label, tf.maximum(mins, maxes)), tf.math.greater(label, tf.minimum(mins, maxes))),
+      tf.squeeze(loss_inside, 0),
+      loss_outside
+    )
+  elif norm == 2:
+    # loss = [tf.math.square(label) * tf.math.abs(maxes - mins)
+    #  - label * tf.math.abs(tf.math.square(mins) - tf.math.square(maxes))
+    #  + tf.math.abs(tf.pow(mins, tf.constant([3.])) - tf.pow(maxes, tf.constant([3.])))
+    # ]
+    # loss = tf.math.divide(loss, tf.math.abs(maxes - mins))
+    loss = [tf.math.square(label)
+     - label * (mins + maxes)
+     + (tf.math.square(mins) + tf.math.square(maxes) + tf.multiply(mins, maxes)) / 3
+    ]
+  if per_image:
+    return tf.reduce_sum(loss, axis=(1, 2, 3))
+  else:
+    return tf.reduce_sum(loss)

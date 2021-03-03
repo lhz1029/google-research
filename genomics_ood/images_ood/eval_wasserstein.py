@@ -36,6 +36,9 @@ from matplotlib.lines import Line2D
 from genomics_ood.images_ood import pixel_cnn
 from genomics_ood.images_ood import utils
 
+from scipy.stats import wasserstein_distance
+import ot
+
 tf.compat.v1.disable_v2_behavior()
 
 flags.DEFINE_string('model_dir', '/tmp/expfashion/rescaleFalse/',
@@ -50,6 +53,7 @@ flags.DEFINE_integer(
      'repeat_id=i indicates the i-th independent run.',
      'repeat_id=-1 indecates only one independent run.'))
 flags.DEFINE_boolean('color_classes', False, 'whether to color by class (only for fashion mnist and mnist)')
+flags.DEFINE_boolean('logistic', False, 'whether model is logistic')
 FLAGS = flags.FLAGS
 
 REG_WEIGHT_LIST = [0, 10, 100]
@@ -72,6 +76,7 @@ def find_ckpt_match_param(reg_weight, mutation_rate, repeat_id, ckpt_step):
   """Find model ckpt that is trained based on mutation_rate and reg_weight."""
   param_dir = 'reg%.2f_mr%.2f' % (reg_weight, mutation_rate)
   ckpt_dir = os.path.join(FLAGS.model_dir, param_dir)
+  print(ckpt_dir)
   if repeat_id == -1:
     ckpt_repeat_dir = os.path.join(ckpt_dir, 'model')
   else:
@@ -84,7 +89,7 @@ def find_ckpt_match_param(reg_weight, mutation_rate, repeat_id, ckpt_step):
     ckpt_repeat_dir = os.path.join(ckpt_dir, repeat_dir) # , 'model')
   print(ckpt_repeat_dir)
   ckpt_file = utils.get_ckpt_at_step(ckpt_repeat_dir, ckpt_step)
-  # print('ckpt_file={}'.format(ckpt_file))
+  print('ckpt_file={}'.format(ckpt_file))
   return ckpt_file
 
 
@@ -136,6 +141,7 @@ def load_data_and_model_and_pred(exp,
   # load model
   ckpt_file = find_ckpt_match_param(reg_weight, mutation_rate, repeat_id,
                                     ckpt_step)
+  print('CKPT: ', ckpt_file)
   if not ckpt_file:  # no ckpt file is found
     # raise ValueError('No ckpt model found')
     return None, None, None, None
@@ -149,36 +155,42 @@ def load_data_and_model_and_pred(exp,
       params,
       dist,
       sess,
-      return_per_pixel=return_per_pixel)
+      return_per_pixel=return_per_pixel,
+      wasserstein=True if not FLAGS.logistic else False)
   preds_ood = utils.eval_on_data(
       datasets['%s_ood' % eval_mode_ood],
       utils.image_preprocess,
       params,
       dist,
       sess,
-      return_per_pixel=return_per_pixel)
-  grad_in = preds_in.pop('grads')
-  grad_ood = preds_ood.pop('grads')
+      return_per_pixel=return_per_pixel,
+      wasserstein=True if not FLAGS.logistic else False)
+  grad_in = preds_in['grads']
+  grad_ood = preds_ood['grads']
   grad_in = np.array(grad_in)
   grad_ood = np.array(grad_ood)
   print(grad_in.shape, grad_ood.shape)
-  np.save(f'grad_in_{exp}', grad_in)
-  np.save(f'grad_ood_{exp}', grad_ood)
+  np.save(f'{FLAGS.model_dir}/grad_in', grad_in)
+  np.save(f'{FLAGS.model_dir}/grad_ood', grad_ood)
   # save locs and scales
-  locs_in = preds_in.pop('locs')
-  locs_ood = preds_ood.pop('locs')
+  locs_in = preds_in['locs']
+  locs_ood = preds_ood['locs']
   locs_in = np.array(locs_in)
   locs_ood = np.array(locs_ood)
   print(locs_in.shape, locs_ood.shape)
-  np.save(f'locs_in_{exp}', locs_in)
-  np.save(f'locs_ood_{exp}', locs_ood)
-  scales_in = preds_in.pop('scales')
-  scales_ood = preds_ood.pop('scales')
+  np.save(f'{FLAGS.model_dir}/locs_in', locs_in)
+  np.save(f'{FLAGS.model_dir}/locs_ood', locs_ood)
+  scales_in = preds_in['scales']
+  scales_ood = preds_ood['scales']
   scales_in = np.array(scales_in)
   scales_ood = np.array(scales_ood)
   print(scales_in.shape, scales_ood.shape)
-  np.save(f'scales_in_{exp}', scales_in)
-  np.save(f'scales_ood_{exp}', scales_ood)
+  np.save(f'{FLAGS.model_dir}/scales_in', scales_in)
+  np.save(f'{FLAGS.model_dir}/scales_ood', scales_ood)
+  log_probs_in = preds_in['log_probs']
+  log_probs_ood = preds_ood['log_probs']
+  np.save(f'{FLAGS.model_dir}/log_probs_in', log_probs_in)
+  np.save(f'{FLAGS.model_dir}/log_probs_ood', log_probs_ood)
   return preds_in, preds_ood, grad_in, grad_ood
 
 
@@ -304,14 +316,133 @@ def main(unused_argv):
       0.0,
       FLAGS.repeat_id,
       FLAGS.ckpt_step,
-      'tr',
-      'test1',
+      'test',
+      'test',
       return_per_pixel=True)
+  
+  print(sum(preds_in['log_probs']))
+  with open('evals_likelihood', 'a') as f:
+    f.write('{}: {}\n'.format(FLAGS.model_dir, sum(preds_in['log_probs'])))
+  import sys; sys.exit()
 
+  def dist(preds):
+    """ Doesn't care about whether the image is in the support """
+    # (num_batches, batch_size, 28, 28, 1)
+    preds['locs'] = np.concatenate(preds['locs'])
+    preds['scales'] = np.concatenate(preds['scales'])
+    preds['images'] = np.array(preds['images'])
+    print('locs', preds['locs'].shape)
+    print('scales', preds['scales'].shape)
+    print('images', preds['images'].shape)
+    # return np.minimum(np.abs(preds['images'] - preds['locs']), np.abs(preds['images'] - preds['scales'])).sum(axis=(1, 2, 3))
+    return (np.abs(preds['images'] - preds['locs']) + np.abs(preds['images'] - preds['scales'])).sum(axis=(1, 2, 3))
+
+  # auc_dist = utils.compute_auc(
+  #     -dist(preds_in), -dist(preds_ood), pos_label=0)
+
+  def emd(mins, maxes, label, norm, per_image):
+    mins = np.minimum(np.maximum(mins, np.zeros_like(mins)), np.ones_like(mins) * 255)
+    maxes = np.minimum(np.maximum(maxes, np.zeros_like(maxes)), np.ones_like(maxes) * 255)
+    # support distance, not wasserstein
+    if norm == 0:
+      loss = np.abs(label - (mins + maxes)/2)
+    if norm == 1:
+      loss_outside = np.abs(mins - label) + np.abs(maxes - label)
+      loss_inside = [np.square(label) - np.multiply(label, (mins + maxes)) + np.divide(np.square(mins) + np.square(maxes), 2)]
+      loss_inside = np.divide(loss_inside, np.abs(maxes - mins))
+      loss = np.where(
+        np.logical_and(
+          np.less(label, np.maximum(mins, maxes)), np.greater(label, np.minimum(mins, maxes))),
+        np.squeeze(loss_inside, 0),
+        loss_outside
+      )
+    elif norm == 2:
+      loss = [np.square(label)
+      - label * (mins + maxes)
+      + (np.square(mins) + np.square(maxes) + np.multiply(mins, maxes))/3
+      ]
+    if per_image:
+      return np.sum(loss, axis=(1, 2, 3))
+    else:
+      return np.sum(loss)
+  # norm = int(FLAGS.model_dir.split('/expfashion')[0][-1])
+  # print('norm:', norm)
+  preds_in['locs'] = np.concatenate(preds_in['locs'])
+  preds_in['scales'] = np.concatenate(preds_in['scales'])
+  preds_ood['locs'] = np.concatenate(preds_ood['locs'])
+  preds_ood['scales'] = np.concatenate(preds_ood['scales'])
+  if FLAGS.logistic:
+    for norm in [0, 1, 2]:
+      emd_in = []
+      emd_ood = []
+      for i in range(len(preds_in['locs'])):
+        flattened_locs_in = preds_in['locs'][i].flatten()
+        flattened_scales_in = preds_in['scales'][i].flatten()
+        flattened_images_in = preds_in['images'][i].flatten()
+        flattened_locs_ood = preds_ood['locs'][i].flatten()
+        flattened_scales_ood = preds_ood['scales'][i].flatten()
+        flattened_images_ood = preds_ood['images'][i].flatten()
+        logistic_in_samples = np.random.logistic(flattened_locs_in, flattened_scales_in, size=(100, flattened_locs_in.shape[0]))
+        logistic_ood_samples = np.random.logistic(flattened_locs_ood, flattened_scales_ood, size=(100, flattened_locs_ood.shape[0]))
+        pixel_emd_in = 0
+        pixel_emd_ood = 0
+        for j in range(flattened_locs_in.shape[0]):
+          # print('num_samples ', logistic_in_samples[:, j].shape)
+          if norm == 0:
+            pixel_emd_in += np.abs(logistic_in_samples[:, j] - [flattened_images_in[j]]).mean()
+            pixel_emd_ood += np.abs(logistic_ood_samples[:, j] - [flattened_images_ood[j]]).mean()
+          if norm == 1:
+            pixel_emd_in += ot.emd2_1d(logistic_in_samples[:, j], [flattened_images_in[j]], metric='minkowski')
+            pixel_emd_ood += ot.emd2_1d(logistic_ood_samples[:, j], [flattened_images_ood[j]], metric='minkowski')
+          elif norm == 2:
+            pixel_emd_in += ot.emd2_1d(logistic_in_samples[:, j], [flattened_images_in[j]])
+            pixel_emd_ood += ot.emd2_1d(logistic_ood_samples[:, j], [flattened_images_ood[j]])
+        emd_in.append(pixel_emd_in)
+        emd_ood.append(pixel_emd_ood)
+      print('emd_in', np.array(emd_in).shape)
+      print('emd_ood', np.array(emd_ood).shape)
+      auc_dist = utils.compute_auc(
+        -np.array(emd_in),
+        -np.array(emd_ood),
+        pos_label=0
+      )
+      print('w norm {} {}'.format(norm, auc_dist))
+      with open('evals_table6', 'a') as f:
+        f.write('{} w{}: {}\n'.format(FLAGS.model_dir, norm, auc_dist))
+  else:
+    for norm in [0, 1, 2]:
+      emd_in = []
+      emd_ood = []
+      for i in range(0, len(preds_in['locs']), 50):
+        emd_in.extend(emd(preds_in['locs'][i:i+50], preds_in['scales'][i:i+50], preds_in['images'][i:i+50], norm=norm, per_image=True))
+        emd_ood.extend(emd(preds_ood['locs'][i:i+50], preds_ood['scales'][i:i+50], preds_ood['images'][i:i+50], norm=norm, per_image=True))
+      print('emd_in', np.array(emd_in).min(), np.array(emd_in).max())
+      print('emd_ood', np.array(emd_ood).min(), np.array(emd_ood).max())
+      print('preds_in', preds_in['locs'].min(),preds_in['locs'].max(), preds_in['scales'].min(), preds_in['scales'].max())
+      print('preds_ood', preds_ood['locs'].min(),preds_ood['locs'].max(), preds_ood['scales'].min(), preds_ood['scales'].max())
+      auc_dist = utils.compute_auc(
+        -np.array(emd_in),
+        -np.array(emd_ood),
+        pos_label=0
+      )
+      print('w norm {} {}'.format(norm, auc_dist))
+      with open('evals_table6', 'a') as f:
+        f.write('{} w{}: {}\n'.format(FLAGS.model_dir, norm, auc_dist))
+      # with open('evals2.txt', 'a') as f:
+      #   f.write('{}: {}\n'.format(FLAGS.model_dir, auc_dist))
   auc = utils.compute_auc(
       preds_in['log_probs'], preds_ood['log_probs'], pos_label=0)
+  with open('evals_table6', 'a') as f:
+      f.write('{} mle: {}\n'.format(FLAGS.model_dir, auc))
+  # with open('evals_mle2.txt', 'a') as f:
+  #   f.write('{}: {}\n'.format(FLAGS.model_dir, auc))
+  print('mle {}'.format(auc))
+
+  import sys; sys.exit()
+
+
   if FLAGS.exp in ['fashion', 'mnist']:
-    zeros_in, zeros_ood = calculate_zeros(FLAGS.exp, FLAGS.data_dir, 'tr', 'test1')
+    zeros_in, zeros_ood = calculate_zeros(FLAGS.exp, FLAGS.data_dir, 'test', 'test1')
   else:
     zeros_in, zeros_ood = calculate_complexity(FLAGS.exp, FLAGS.data_dir)
   print(len(zeros_ood), len(preds_ood['log_probs']))
@@ -320,7 +451,6 @@ def main(unused_argv):
   plt.title(FLAGS.exp + ' likelihood')
   plt.savefig(os.path.join(out_dir, FLAGS.exp + ' likelihood' + '.pdf'), bbox_inches='tight')
   plt.clf()
-  print('final test {}'.format(auc))
   # print_and_write(out_f, 'final test, auc={}'.format(auc))
   if FLAGS.color_classes:
     def to_labels(in_classes, ood_classes, exp):

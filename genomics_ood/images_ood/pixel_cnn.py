@@ -47,6 +47,8 @@ from tensorflow_probability.python.distributions import categorical
 from tensorflow_probability.python.distributions import distribution
 from tensorflow_probability.python.distributions import independent
 from tensorflow_probability.python.distributions import logistic
+from tensorflow_probability.python.distributions import bernoulli
+from tensorflow_probability.python.distributions import uniform
 from tensorflow_probability.python.distributions import mixture_same_family
 from tensorflow_probability.python.distributions import quantized_distribution
 from tensorflow_probability.python.distributions import transformed_distribution
@@ -388,6 +390,9 @@ class PixelCNN(distribution.Distribution):
       # `[self._low, self._high]` for use with `QuantizedDistribution`
       locs = self._low + 0.5 * (self._high - self._low) * (locs + 1.)
       scales *= 0.5 * (self._high - self._low)
+    
+    self.locs = locs
+    self.scales = scales
 
     logistic_dist = quantized_distribution.QuantizedDistribution(
         distribution=transformed_distribution.TransformedDistribution(
@@ -409,7 +414,9 @@ class PixelCNN(distribution.Distribution):
                 value,
                 conditional_input=None,
                 training=None,
-                return_per_pixel=False):
+                return_per_pixel=False,
+                dist_family='logistic',
+                wasserstein=False):
     """Log probability function with optional conditional input.
 
     Calculates the log probability of a batch of data under the modeled
@@ -506,8 +513,30 @@ class PixelCNN(distribution.Distribution):
           coef_count += 1
       locs = tf.concat(loc_tensors, axis=-1)
 
-    dist = self._make_mixture_dist(
-        component_logits, locs, scales, return_per_pixel=return_per_pixel)
+    if dist_family == 'logistic':
+      dist = self._make_mixture_dist(
+          component_logits, locs, scales, return_per_pixel=return_per_pixel)
+    elif dist_family == 'uniform' and wasserstein:
+      # assert num_channels == 1, num_channels
+      if num_channels == 1:
+        self.locs = tf.squeeze(locs, [-1])
+        self.scales = tf.squeeze(scales, [-1])
+      else:
+        self.locs = locs
+        self.scales = locs
+      locs = tf.Print(locs, [tf.shape(locs), tf.shape(scales)],'locs and scales')
+      return locs, scales
+    elif dist_family == 'uniform':
+      # assert num_channels == 1
+      if num_channels == 1:
+        self.locs = tf.squeeze(locs, [-1])
+        self.scales = tf.squeeze(scales, [-1])
+      else:
+        self.locs = locs
+        self.scales = locs
+      dist = uniform.Uniform(low=tf.minimum(self.locs, self.scales), high=tf.maximum(self.locs, self.scales))
+      if not return_per_pixel:
+        dist = independent.Independent(dist, reinterpreted_batch_ndims=2)
     log_px = dist.log_prob(value)
     if return_per_pixel:
       return log_px
