@@ -190,10 +190,14 @@ def main(unused_argv):
       raise ValueError("Unsupported experiment: ", FLAGS.exp)
     mins = tf.maximum(mins, tf.zeros_like(mins))
     maxes = tf.minimum(maxes, tf.ones_like(maxes) * 255)
-    mins = tf.Print(mins, [tf.reduce_min(mins), tf.reduce_max(mins), tf.reduce_min(maxes), tf.reduce_max(maxes), tf.reduce_min(tr_in_im['image']), tf.reduce_max(tr_in_im['image'])], summarize=10)
+    # mins = tf.Print(mins, [tf.reduce_min(mins), tf.reduce_max(mins), tf.reduce_min(maxes), tf.reduce_max(maxes), tf.reduce_min(tr_in_im['image']), tf.reduce_max(tr_in_im['image'])], summarize=10)
+    # mins = tf.Print(mins, [tf.shape(mins), tf.shape(maxes), tf.shape(tr_in_im['image'])], "training", summarize=10)
+    mins = tf.Print(mins, [tf.reduce_sum(tf.cast(tf.math.equal(mins, maxes), dtype=tf.int32))], "min equals max", summarize=10)
     loss = utils.emd(mins, maxes, tr_in_im['image'], FLAGS.lambda_penalty, FLAGS.wnorm)
 
     val_mins, val_maxes = dist.log_prob(val_in_im['image'], return_per_pixel=True, dist_family='uniform', wasserstein=True)
+    val_mins = tf.maximum(val_mins, tf.zeros_like(val_mins))
+    val_maxes = tf.minimum(val_maxes, tf.ones_like(val_maxes) * 255)
     if FLAGS.exp == 'fashion':
       val_mins = tf.squeeze(val_mins, [-1])
       val_maxes = tf.squeeze(val_maxes, [-1])
@@ -202,6 +206,7 @@ def main(unused_argv):
     else:
       raise ValueError("Unsupported experiment: ", FLAGS.exp)
     # val_mins = tf.Print(val_mins, [tf.reduce_min(val_mins), tf.reduce_max(val_mins), tf.reduce_min(val_maxes), tf.reduce_max(val_maxes), tf.reduce_min(val_in_im['image']), tf.reduce_max(val_in_im['image'])], summarize=10)
+    val_mins = tf.Print(val_mins, [tf.reduce_sum(tf.cast(tf.math.equal(val_mins, val_maxes), dtype=tf.int32))], "min equals max", summarize=10)
     loss_val_in = utils.emd(val_mins, val_maxes, val_in_im['image'], FLAGS.lambda_penalty, FLAGS.wnorm)
   else:
     log_prob_i = dist.log_prob(tr_in_im['image'], return_per_pixel=False)

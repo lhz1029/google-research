@@ -516,6 +516,7 @@ class PixelCNN(distribution.Distribution):
     if dist_family == 'logistic':
       dist = self._make_mixture_dist(
           component_logits, locs, scales, return_per_pixel=return_per_pixel)
+    # for training
     elif dist_family == 'uniform' and wasserstein:
       # assert num_channels == 1, num_channels
       if num_channels == 1:
@@ -524,16 +525,22 @@ class PixelCNN(distribution.Distribution):
       else:
         self.locs = locs
         self.scales = locs
-      locs = tf.Print(locs, [tf.shape(locs), tf.shape(scales)],'locs and scales')
+      # locs = tf.Print(locs, [tf.shape(locs), tf.shape(scales)],'locs and scales', summarize=10)
       return locs, scales
+    # for evaluation, to get log probs
     elif dist_family == 'uniform':
       # assert num_channels == 1
-      if num_channels == 1:
-        self.locs = tf.squeeze(locs, [-1])
-        self.scales = tf.squeeze(scales, [-1])
-      else:
-        self.locs = locs
-        self.scales = locs
+      # scales = tf.Print(scales, [tf.shape(scales), tf.shape(locs), tf.shape(value)], summarize=10, message="dist")
+      # if num_channels == 1:
+      #   self.locs = tf.squeeze(locs, [-1])
+      #   self.scales = tf.squeeze(scales, [-1])
+      # else:
+      #   self.locs = locs
+      #   self.scales = scales
+
+      # num_mixtures dim
+      self.locs = tf.squeeze(locs, [3])
+      self.scales = tf.squeeze(scales, [3])
       dist = uniform.Uniform(low=tf.minimum(self.locs, self.scales), high=tf.maximum(self.locs, self.scales))
       if not return_per_pixel:
         dist = independent.Independent(dist, reinterpreted_batch_ndims=2)
