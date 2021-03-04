@@ -340,19 +340,9 @@ def eval_on_data(data,
   return out
 
 def emd(mins, maxes, label, penalty=100, norm=1, per_image=False):
-  # if norm == 1:
-  #   loss = tf.math.abs(mins - label) + tf.math.abs(maxes - label)
-  # elif norm == 2:
-  #   loss = tf.math.square(mins - label) + tf.math.square(maxes - label)
-  # # return tf.reduce_sum(loss)
-  # penalty_mask = tf.where(tf.math.logical_and(
-  #   tf.math.less(label, tf.maximum(mins, maxes)), tf.math.greater(label, tf.minimum(mins, maxes))
-  # ), tf.zeros_like(label), tf.ones_like(label))
-  # return tf.reduce_sum(loss + penalty * penalty_mask)
   if norm == 0:
     loss = tf.math.abs(label - tf.math.divide(mins + maxes, 2))
   if norm == 1:
-    # loss_outside = tf.math.abs(mins - label) + tf.math.abs(maxes - label)
     loss_outside = tf.math.abs(label - tf.math.divide(mins + maxes, 2))
     loss_inside = [tf.math.square(label) - tf.math.multiply(label, (mins + maxes)) + tf.math.divide(tf.math.square(mins) + tf.math.square(maxes), 2)]
     # loss_inside = tf.Print(loss_inside, [tf.shape(loss_inside), tf.shape(loss_outside)], "before", summarize=10)
@@ -365,11 +355,6 @@ def emd(mins, maxes, label, penalty=100, norm=1, per_image=False):
       loss_outside
     )
   elif norm == 2:
-    # loss = [tf.math.square(label) * tf.math.abs(maxes - mins)
-    #  - label * tf.math.abs(tf.math.square(mins) - tf.math.square(maxes))
-    #  + tf.math.abs(tf.pow(mins, tf.constant([3.])) - tf.pow(maxes, tf.constant([3.])))
-    # ]
-    # loss = tf.math.divide(loss, tf.math.abs(maxes - mins))
     loss = (tf.math.square(label)
      - label * (mins + maxes)
      + (tf.math.square(mins) + tf.math.square(maxes) + tf.multiply(mins, maxes)) / 3
