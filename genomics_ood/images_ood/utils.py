@@ -26,9 +26,13 @@ import numpy as np
 from sklearn import metrics
 import tensorflow.compat.v1 as tf
 import yaml
+from PIL import Image
+import glob
+import pickle
+import cv2
 
 
-def load_tfdata_from_np(np_file):
+def load_tfdata_from_np(np_file, flip=None):
   try:
     with tf.compat.v1.gfile.Open(np_file, mode='rb') as f:
       images = np.load(f)
@@ -36,13 +40,16 @@ def load_tfdata_from_np(np_file):
   except ValueError:
     print('tf open failed')
     images = np.load(np_file)
+    if flip == 'v':
+      images = np.array([np.flipud(img) for img in images])
+    elif flip == 'h':
+      images = np.array([np.fliplr(img) for img in images])
     labels = images
   dataset = tf.compat.v1.data.Dataset.from_tensor_slices(
       (images, labels)).map(tensor_slices_preprocess)
   return dataset
 
-
-def load_fmnist_datasets(data_dir):
+def load_fmnist_datasets(data_dir, out_data='mnist'):
   """Load fashionMNIST and MNIST dataset from np array."""
   tr_in = load_tfdata_from_np(os.path.join(data_dir, 'fashion_mnist_train.npy'))
   val_in = load_tfdata_from_np(os.path.join(data_dir, 'fashion_mnist_val.npy'))
@@ -51,8 +58,37 @@ def load_fmnist_datasets(data_dir):
   test1_in = load_tfdata_from_np(os.path.join(data_dir, 'fashion_mnist_test1.npy'))
 
   val_ood = load_tfdata_from_np(os.path.join(data_dir, 'notmnist.npy'))
-  test_ood = load_tfdata_from_np(os.path.join(data_dir, 'mnist_test.npy'))
   test1_ood = load_tfdata_from_np(os.path.join(data_dir, 'mnist_test1.npy'))
+  if out_data == 'mnist':
+    test_ood = load_tfdata_from_np(os.path.join(data_dir, 'mnist_test.npy'))
+  elif out_data == 'hflip':
+    test_ood = load_tfdata_from_np(
+      os.path.join(data_dir, 'fashion_mnist_test.npy'), flip='h')
+  elif out_data == 'vflip':
+    test_ood = load_tfdata_from_np(
+      os.path.join(data_dir, 'fashion_mnist_test.npy'), flip='v')
+  elif out_data == 'unif':
+    images = np.random.uniform(size=(10000, 32, 32, 3))
+    labels = images
+    test_ood = tf.compat.v1.data.Dataset.from_tensor_slices(
+      (images, labels)).map(tensor_slices_preprocess)
+  elif out_data == 'gaussian':
+    images = np.random.normal(size=(10000, 32, 32, 3))
+    labels = images
+    test_ood = tf.compat.v1.data.Dataset.from_tensor_slices(
+      (images, labels)).map(tensor_slices_preprocess)
+  elif out_data == 'omniglot':
+    images = []
+    for img_file in glob.glob(os.path.join(data_dir, 'omniglot', 'images_evaluation') + '/**/*.png', recursive=True):
+      img = cv2.imread(img_file)
+      img = cv2.resize(img, (28, 28,)).astype('uint8')
+      images.append(img)
+    images = np.array(images)
+    print(images.shape)
+    images = images.reshape((-1, 28, 28, 1))
+    labels = images
+    test_ood = tf.compat.v1.data.Dataset.from_tensor_slices(
+      (images, labels)).map(tensor_slices_preprocess)
   return {
       'tr_in': tr_in,
       'val_in': val_in,
@@ -85,22 +121,58 @@ def load_mnist_datasets(data_dir):
   }
 
 
-def load_cifar_datasets(data_dir):
+def load_cifar_datasets(data_dir, out_data='svhn'):
   """Load CIFAR10 and SVHN dataset from np array."""
   tr_in = load_tfdata_from_np(os.path.join(data_dir, 'cifar10_train.npy'))
   val_in = load_tfdata_from_np(os.path.join(data_dir, 'cifar10_val.npy'))
   test_in = load_tfdata_from_np(os.path.join(data_dir, 'cifar10_test.npy'))
 
-  test_ood = load_tfdata_from_np(
-      os.path.join(data_dir, 'svhn_cropped_test.npy'))
-
+  if out_data == 'svhn':
+    test_ood = load_tfdata_from_np(
+        os.path.join(data_dir, 'svhn_cropped_test.npy'))
+  elif out_data == 'celeba':
+    test_png_idx = range(182638, 202599 + 1)
+    images = []
+    for i in test_png_idx:
+      img_file = os.path.join(data_dir, 'img_align_celeba', f'{i}.jpg')
+      img = cv2.imread(img_file)
+      img = cv2.resize(img, (32, 32,)).astype('uint8')
+      images.append(np.asarray(img))
+    images = np.array(images)
+    labels = images
+    test_ood = tf.compat.v1.data.Dataset.from_tensor_slices(
+      (images, labels)).map(tensor_slices_preprocess)
+  elif out_data == 'hflip':
+    test_ood = load_tfdata_from_np(
+      os.path.join(data_dir, 'cifar10_test.npy'), flip='h')
+  elif out_data == 'vflip':
+    test_ood = load_tfdata_from_np(
+      os.path.join(data_dir, 'cifar10_test.npy'), flip='v')
+  elif out_data == 'unif':
+    images = np.random.uniform(size=(10000, 32, 32, 3))
+    labels = images
+    test_ood = tf.compat.v1.data.Dataset.from_tensor_slices(
+      (images, labels)).map(tensor_slices_preprocess)
+  elif out_data == 'gaussian':
+    images = np.random.normal(size=(10000, 32, 32, 3))
+    labels = images
+    test_ood = tf.compat.v1.data.Dataset.from_tensor_slices(
+      (images, labels)).map(tensor_slices_preprocess)
+  elif out_data == 'cifar100':
+    with open(os.path.join(data_dir, 'cifar-100-python', 'test'), 'rb') as f:
+      data = pickle.load(f, encoding='bytes')[b'data']
+      images = data.reshape((10000, 32, 32, 3))
+      labels = images
+    test_ood = tf.compat.v1.data.Dataset.from_tensor_slices(
+    (images, labels)).map(tensor_slices_preprocess)
+  elif out_data == 'imagenet32':
+    raise NotImplemented("imagenet32 not yet set up")
   return {
       'tr_in': tr_in,
       'val_in': val_in,
       'test_in': test_in,
       'test_ood': test_ood  # val_ood is val_in_grey
   }
-
 
 def tensor_slices_preprocess(x, y):
   new = {}
@@ -227,6 +299,7 @@ def eval_on_data(data,
   # image = tf.placeholder(tf.float32, shape=dist.image_shape)
   gradients = tf.gradients(log_prob, data_im['image'])[0]
   grad_norm = tf.norm(tf.reshape(gradients, [tf.shape(gradients)[0], -1]), axis=1)
+  # grad_norm = tf.Print(grad_norm, [tf.shape(log_prob), tf.shape(data_im['image']), tf.shape(gradients), tf.shape(grad_norm)], summarize=10)
   log_prob_i_list = []
   label_i_list = []
   image_i_list = []
@@ -248,6 +321,7 @@ def eval_on_data(data,
       scales_list.append(scales_np)
 
     except tf.errors.OutOfRangeError:
+      print('break')
       break
 
   grad_i_np = np.hstack(grad_i_list)
@@ -278,11 +352,12 @@ def emd(mins, maxes, label, penalty=100, norm=1, per_image=False):
   if norm == 0:
     loss = tf.math.abs(label - tf.math.divide(mins + maxes, 2))
   if norm == 1:
-    loss_outside = tf.math.abs(mins - label) + tf.math.abs(maxes - label)
+    # loss_outside = tf.math.abs(mins - label) + tf.math.abs(maxes - label)
+    loss_outside = tf.math.abs(label - tf.math.divide(mins + maxes, 2))
     loss_inside = [tf.math.square(label) - tf.math.multiply(label, (mins + maxes)) + tf.math.divide(tf.math.square(mins) + tf.math.square(maxes), 2)]
-    loss_inside = tf.Print(loss_inside, [tf.shape(loss_inside), tf.shape(loss_outside)], "before")
+    # loss_inside = tf.Print(loss_inside, [tf.shape(loss_inside), tf.shape(loss_outside)], "before", summarize=10)
     loss_inside = tf.math.divide(loss_inside, tf.math.abs(maxes - mins))
-    loss_inside = tf.Print(loss_inside, [tf.shape(loss_inside), tf.shape(loss_outside)], "after")
+    # loss_inside = tf.Print(loss_inside, [tf.shape(loss_inside), tf.shape(loss_outside)], "after", summarize=10)
     loss = tf.where(
       tf.math.logical_and(
         tf.math.less(label, tf.maximum(mins, maxes)), tf.math.greater(label, tf.minimum(mins, maxes))),
@@ -295,10 +370,10 @@ def emd(mins, maxes, label, penalty=100, norm=1, per_image=False):
     #  + tf.math.abs(tf.pow(mins, tf.constant([3.])) - tf.pow(maxes, tf.constant([3.])))
     # ]
     # loss = tf.math.divide(loss, tf.math.abs(maxes - mins))
-    loss = [tf.math.square(label)
+    loss = (tf.math.square(label)
      - label * (mins + maxes)
      + (tf.math.square(mins) + tf.math.square(maxes) + tf.multiply(mins, maxes)) / 3
-    ]
+    )
   if per_image:
     return tf.reduce_sum(loss, axis=(1, 2, 3))
   else:

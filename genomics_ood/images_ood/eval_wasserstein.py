@@ -32,6 +32,7 @@ import numpy as np
 import seaborn as sns
 import tensorflow.compat.v1 as tf
 from matplotlib.lines import Line2D
+import csv
 
 from genomics_ood.images_ood import pixel_cnn
 from genomics_ood.images_ood import utils
@@ -43,10 +44,10 @@ tf.compat.v1.disable_v2_behavior()
 
 flags.DEFINE_string('model_dir', '/tmp/expfashion/rescaleFalse/',
                     'Directory to write results and logs.')
-flags.DEFINE_string('data_dir', '/tmp/image_data',
+flags.DEFINE_string('data_dir', '/misc/vlgscratch5/RanganathGroup/lily/ood/data',
                     'Directory to data np arrays.')
 flags.DEFINE_integer('ckpt_step', 10, 'The step of the selected ckpt.')
-flags.DEFINE_string('exp', 'fashion', 'cifar or fashion')
+flags.DEFINE_string('exp', 'fashion-mnist', 'describe both in and out-dist')
 flags.DEFINE_integer(
     'repeat_id', -1,
     ('We run 10 independent experiments to get the mean and variance of AUROC.',
@@ -59,16 +60,39 @@ FLAGS = flags.FLAGS
 REG_WEIGHT_LIST = [0, 10, 100]
 MUTATION_RATE_LIST = [0.1, 0.2, 0.3]
 
+output_file = "ood_eval.csv"
 
 def load_datasets(exp, data_dir):
-  if exp == 'fashion':
+  if exp == 'fashion-mnist':
     datasets = utils.load_fmnist_datasets(data_dir)
-  elif exp == 'mnist':
+  elif exp == 'fashion-vflip':
+    datasets = utils.load_fmnist_datasets(data_dir, out_data='vflip')
+  elif exp == 'fashion-hflip':
+    datasets = utils.load_fmnist_datasets(data_dir, out_data='hflip')
+  elif exp == 'fashion-omniglot':
+    datasets = utils.load_fmnist_datasets(data_dir, out_data='omniglot')
+  elif exp == 'fashion-gaussian':
+    datasets = utils.load_fmnist_datasets(data_dir, out_data='gaussian')
+  elif exp == 'fashion-uniform':
+    datasets = utils.load_fmnist_datasets(data_dir, out_data='unif')
+  elif exp == 'mnist-fashion':
     datasets = utils.load_mnist_datasets(data_dir)
-  elif exp == 'svhn':
-    datasets = utils.load_svhn_datasets(data_dir)
-  else:
+  elif exp == 'cifar-svhn':
     datasets = utils.load_cifar_datasets(data_dir)
+  elif exp == 'cifar-celeba':
+    datasets = utils.load_cifar_datasets(data_dir, out_data='celeba')
+  elif exp == 'cifar-vflip':
+    datasets = utils.load_cifar_datasets(data_dir, out_data='vflip')
+  elif exp == 'cifar-hflip':
+    datasets = utils.load_cifar_datasets(data_dir, out_data='hflip')
+  elif exp == 'cifar-gaussian':
+    datasets = utils.load_cifar_datasets(data_dir, out_data='gaussian')
+  elif exp == 'cifar-uniform':
+    datasets = utils.load_cifar_datasets(data_dir, out_data='unif')
+  elif exp == 'cifar-cifar100':
+    datasets = utils.load_cifar_datasets(data_dir, out_data='cifar100')
+  elif exp == 'cifar-imagenet32':
+    datasets = utils.load_cifar_datasets(data_dir, out_data='imagenet32')
   return datasets
 
 
@@ -143,7 +167,9 @@ def load_data_and_model_and_pred(exp,
                                     ckpt_step)
   print('CKPT: ', ckpt_file)
   if not ckpt_file:  # no ckpt file is found
-    # raise ValueError('No ckpt model found')
+    # with open(output_file, 'a') as f:
+    #   f.write('{}: bad model\n'.format(FLAGS.model_dir))
+    raise ValueError('No ckpt model found')
     return None, None, None, None
 
   dist, params, sess = create_model_and_restore_ckpt(ckpt_file)
@@ -194,31 +220,6 @@ def load_data_and_model_and_pred(exp,
   return preds_in, preds_ood, grad_in, grad_ood
 
 
-def compute_auc_llr(preds_in, preds_ood, preds0_in, preds0_ood):
-  """Compute AUC for LLR."""
-  # check if samples are in the same order
-  assert np.array_equal(preds_in['labels'], preds0_in['labels'])
-  assert np.array_equal(preds_ood['labels'], preds0_ood['labels'])
-
-  # evaluate AUROC for OOD detection
-  auc = utils.compute_auc(
-      preds_in['log_probs'], preds_ood['log_probs'], pos_label=0)
-  llr_in = preds_in['log_probs'] - preds0_in['log_probs']
-  llr_ood = preds_ood['log_probs'] - preds0_ood['log_probs']
-  auc_llr = utils.compute_auc(llr_in, llr_ood, pos_label=0)
-  return auc, auc_llr
-
-def compute_auc_grad(preds_in, preds_ood, preds0_in, preds0_ood):
-  """Compute AUC for LLR."""
-
-  # evaluate AUROC for OOD detection
-  auc = utils.compute_auc(
-      preds_in, preds_ood, pos_label=0)
-  llr_in = preds_in - preds0_in
-  llr_ood = preds_ood - preds0_ood
-  auc_llr = utils.compute_auc(llr_in, llr_ood, pos_label=0)
-  return auc, auc_llr
-
 def print_and_write(f, context):
   print(context + '\n')
   f.write(context + '\n')
@@ -245,61 +246,14 @@ def plot_heatmap(n, data, plt_file, colorbar=True):
   with tf.gfile.Open(plt_file, 'wb') as sp:
     plt.savefig(sp, format='pdf', bbox_inches='tight')
 
-def calculate_zeros(exp, data_dir, eval_mode_in='test', eval_mode_ood='test'):
-  eval_mode_in = 'train' if eval_mode_in == 'tr' else eval_mode_in
-  eval_mode_ood = 'train' if eval_mode_ood == 'tr' else eval_mode_ood
-  if exp == 'fashion':
-    test_in = os.path.join(data_dir, f'fashion_mnist_{eval_mode_in}.npy')
-    test_ood = os.path.join(data_dir, f'mnist_{eval_mode_ood}.npy')
-    print(eval_mode_ood)
-  elif exp == 'mnist':
-    test_in = os.path.join(data_dir, f'mnist_{eval_mode_in}.npy')
-    test_ood = os.path.join(data_dir, f'fashion_mnist_{eval_mode_ood}.npy')
-  else:
-    raise ValueError("exp not supported: ", exp)
-  img_in = np.load(test_in)
-  img_ood = np.load(test_ood)
-  print(img_ood.shape)
-  img_in = img_in.reshape((img_in.shape[0], -1))
-  img_ood = img_ood.reshape((img_ood.shape[0], -1))
-  zeros_in = (img_in == 0).sum(axis=1) / img_in.shape[1]
-  zeros_ood = (img_ood == 0).sum(axis=1) / img_ood.shape[1]
-  # zeros_in = np.mean(img_in, axis=1)
-  # zeros_ood = np.mean(img_ood, axis=1)
-  return zeros_in, zeros_ood
-
-def get_classes(exp, data_dir):
-  if exp == 'fashion':
-    in_name = 'fashion_mnist'
-    ood_name = 'mnist'
-  elif exp == 'mnist':
-    in_name = 'mnist'
-    ood_name = 'fashion_mnist'
-  else:
-    raise ValueError('bad exp')
-  in_classes = np.load(os.path.join(data_dir, in_name + '_labels1.npy'))
-  ood_classes = np.load(os.path.join(data_dir, ood_name + '_labels1.npy'))
-  return in_classes, ood_classes
-
-def calculate_complexity(exp, data_dir):
-  if exp == 'fashion':
-    test_in = os.path.join(data_dir, 'fashion_mnist_test.npy')
-    test_ood = os.path.join(data_dir, 'mnist_test.npy')
-  elif exp == 'mnist':
-    test_in = os.path.join(data_dir, 'mnist_test.npy')
-    test_ood = os.path.join(data_dir, 'fashion_mnist_test.npy')
-  elif exp == 'svhn':
-    test_in = os.path.join(data_dir, 'cifar10_test.npy')
-    test_ood = os.path.join(data_dir, 'svhn_cropped_test.npy')
-  elif exp == 'cifar':
-    test_in = os.path.join(data_dir, 'svhn_cropped_test.npy')
-    test_ood = os.path.join(data_dir, 'cifar10_test.npy')
-  else:
-    raise ValueError("exp not supported: ", exp)
-  
-
 def main(unused_argv):
-
+  # import pandas as pd
+  # df = pd.read_csv(output_file)
+  # df.columns=['model', 'exp', 'norm', 'auc']
+  # results = df[(df.model==FLAGS.model_dir)&(df.exp==FLAGS.exp)]
+  # if results.shape > 0:
+  #   print(f"{FLAGS.model_dir}, {FLAGS.exp} already run")
+  #   import sys; sys.exit()
 
   # write results to file
   out_dir = os.path.join(FLAGS.model_dir, 'results')
@@ -323,7 +277,6 @@ def main(unused_argv):
   print(sum(preds_in['log_probs']))
   with open('evals_likelihood', 'a') as f:
     f.write('{}: {}\n'.format(FLAGS.model_dir, sum(preds_in['log_probs'])))
-  import sys; sys.exit()
 
   def dist(preds):
     """ Doesn't care about whether the image is in the support """
@@ -357,10 +310,11 @@ def main(unused_argv):
         loss_outside
       )
     elif norm == 2:
-      loss = [np.square(label)
+      loss = (np.square(label)
       - label * (mins + maxes)
       + (np.square(mins) + np.square(maxes) + np.multiply(mins, maxes))/3
-      ]
+      )
+      # print('loss', np.array(loss).shape, mins.shape, maxes.shape, label.shape)
     if per_image:
       return np.sum(loss, axis=(1, 2, 3))
     else:
@@ -407,8 +361,10 @@ def main(unused_argv):
         pos_label=0
       )
       print('w norm {} {}'.format(norm, auc_dist))
-      with open('evals_table6', 'a') as f:
-        f.write('{} w{}: {}\n'.format(FLAGS.model_dir, norm, auc_dist))
+      with open(output_file, 'a') as f:
+        writer = csv.writer(f)
+        writer.writerow([FLAGS.model_dir, FLAGS.exp, norm, auc_dist])
+        # f.write('{} w{}: {}\n'.format(FLAGS.model_dir, norm, auc_dist))
   else:
     for norm in [0, 1, 2]:
       emd_in = []
@@ -420,126 +376,30 @@ def main(unused_argv):
       print('emd_ood', np.array(emd_ood).min(), np.array(emd_ood).max())
       print('preds_in', preds_in['locs'].min(),preds_in['locs'].max(), preds_in['scales'].min(), preds_in['scales'].max())
       print('preds_ood', preds_ood['locs'].min(),preds_ood['locs'].max(), preds_ood['scales'].min(), preds_ood['scales'].max())
+      print(np.array(emd_in).shape, np.array(emd_ood).shape)
       auc_dist = utils.compute_auc(
         -np.array(emd_in),
         -np.array(emd_ood),
         pos_label=0
       )
       print('w norm {} {}'.format(norm, auc_dist))
-      with open('evals_table6', 'a') as f:
-        f.write('{} w{}: {}\n'.format(FLAGS.model_dir, norm, auc_dist))
+      with open(output_file, 'a') as f:
+        writer = csv.writer(f)
+        writer.writerow([FLAGS.model_dir, FLAGS.exp, norm, auc_dist])
+      # with open(output_file, 'a') as f:
+      #   f.write('{} w{}: {}\n'.format(FLAGS.model_dir, norm, auc_dist))
       # with open('evals2.txt', 'a') as f:
       #   f.write('{}: {}\n'.format(FLAGS.model_dir, auc_dist))
   auc = utils.compute_auc(
       preds_in['log_probs'], preds_ood['log_probs'], pos_label=0)
-  with open('evals_table6', 'a') as f:
-      f.write('{} mle: {}\n'.format(FLAGS.model_dir, auc))
+  with open(output_file, 'a') as f:
+    writer = csv.writer(f)
+    writer.writerow([FLAGS.model_dir, FLAGS.exp, 'mle', auc_dist])
+  # with open(output_file, 'a') as f:
+  #     f.write('{} mle: {}\n'.format(FLAGS.model_dir, auc))
   # with open('evals_mle2.txt', 'a') as f:
   #   f.write('{}: {}\n'.format(FLAGS.model_dir, auc))
   print('mle {}'.format(auc))
-
-  import sys; sys.exit()
-
-
-  if FLAGS.exp in ['fashion', 'mnist']:
-    zeros_in, zeros_ood = calculate_zeros(FLAGS.exp, FLAGS.data_dir, 'test', 'test1')
-  else:
-    zeros_in, zeros_ood = calculate_complexity(FLAGS.exp, FLAGS.data_dir)
-  print(len(zeros_ood), len(preds_ood['log_probs']))
-  plt.scatter(zeros_in, preds_in['log_probs'], color='blue', alpha=.2)
-  plt.scatter(zeros_ood, preds_ood['log_probs'], color='red', alpha=.2)
-  plt.title(FLAGS.exp + ' likelihood')
-  plt.savefig(os.path.join(out_dir, FLAGS.exp + ' likelihood' + '.pdf'), bbox_inches='tight')
-  plt.clf()
-  # print_and_write(out_f, 'final test, auc={}'.format(auc))
-  if FLAGS.color_classes:
-    def to_labels(in_classes, ood_classes, exp):
-        fashion_dict = {0: 'tshirt', 1: 'trouser', 2: 'pullover', 3:'dress', 4: 'coat', 5:'sandal', 6:'shirt', 7:'sneaker', 8:'bag', 9:'ankle_boot'}
-        mnist_dict = {k: str(k) for k in range(10)}
-        if exp == 'fashion':
-            in_dict = fashion_dict
-            ood_dict = mnist_dict
-        elif exp == 'mnist':
-            in_dict = mnist_dict
-            ood_dict = fashion_dict
-        else:
-            raise ValueError('bad exp')
-        # in_labels = [in_dict[i] for i in in_classes]
-        # ood_labels = [ood_dict[i] for i in ood_classes]
-        return in_labels, ood_labels
-    in_classes, ood_classes = get_classes(FLAGS.exp, FLAGS.data_dir)
-    plt.scatter(zeros_in, preds_in['log_probs'], c=in_classes, cmap='Pastel2', alpha=.2)
-    plt.scatter(zeros_ood, preds_ood['log_probs'], c=ood_classes, cmap='Dark2', alpha=.2)
-  else:
-    plt.scatter(zeros_in, preds_in['log_probs'], color='blue', alpha=.2)
-    plt.scatter(zeros_ood, preds_ood['log_probs'], color='red', alpha=.2)
-  plt.title(FLAGS.exp + ' likelihood')
-  lines_in = [Line2D([0], [0], color=plt.cm.Pastel2(i)) for i in range(10)]
-  lines_ood = [Line2D([0], [0], color=plt.cm.Dark2(i)) for i in range(10)]
-  lines = lines_in + lines_ood
-  fashion_labels = ['tshirt', 'trouser', 'pullover', 'dress', 'coat', 'sandal', 'shirt', 'sneaker', 'bag', 'ankle_boot']
-  mnist_labels = list(range(10))
-  if FLAGS.exp == 'fashion':
-    labels = fashion_labels + mnist_labels
-  elif FLAGS.exp == 'mnist':
-    labels = mnist_labels + fashion_labels
-  plt.legend(lines, labels)
-  plt.savefig(os.path.join(out_dir, FLAGS.exp + ' likelihood colored.pdf'), bbox_inches='tight')
-  plt.clf()
-
-  # typicality approximation
-  grad_in = grad_in.reshape((-1))
-  grad_ood = grad_ood.reshape((-1))
-  grad_auc = utils.compute_auc(
-      grad_in, grad_ood, pos_label=0)
-  print(zeros_in.shape, grad_in.shape)
-  plt.scatter(zeros_in, grad_in, color='blue', alpha=.2)
-  plt.scatter(zeros_ood, grad_ood, color='red', alpha=.2)
-  plt.title(FLAGS.exp + ' typicality')
-  plt.savefig(os.path.join(out_dir, FLAGS.exp + ' typicality' + '.pdf'), bbox_inches='tight')
-  plt.clf()
-  print_and_write(out_f, 'final test grad, auc={}'.format(grad_auc))
-
-  out_f.close()
-
-  # plot heatmaps (Figure 3)
-  if FLAGS.exp in ['fashion', 'mnist']:
-    n = 4
-
-    # FashionMNIST
-    log_probs_in = preds_in['log_probs']
-    log_probs_pp_in = preds_in['log_probs_per_pixel']
-    n_sample_in = len(log_probs_in)
-    log_probs_in_sorted = sorted(
-        range(n_sample_in), key=lambda k: log_probs_in[k], reverse=True)
-    ids_seq = np.arange(1, n_sample_in, int(n_sample_in / (n * n)))
-
-    ## pure likelihood
-    data = [
-        log_probs_pp_in[log_probs_in_sorted[ids_seq[i]]] + 6
-        for i in range(n * n)
-    ]
-    plt_file = os.path.join(
-        out_dir, f'run%d_heatmap_{FLAGS.exp}_test_in_p(x).pdf' % FLAGS.repeat_id)
-    plot_heatmap(n, data, plt_file)
-
-    # MNIST
-    log_probs_ood = preds_ood['log_probs']
-    log_probs_pp_ood = preds_ood['log_probs_per_pixel']
-    n_sample_ood = len(log_probs_ood)
-    log_probs_ood_sorted = sorted(
-        range(n_sample_ood), key=lambda k: log_probs_ood[k], reverse=True)
-    ids_seq = np.arange(1, n_sample_ood, int(n_sample_ood / (n * n)))
-
-    ## pure likelihood
-    data = [
-        log_probs_pp_ood[log_probs_ood_sorted[ids_seq[i]]] + 6
-        for i in range(n * n)
-    ]
-    plt_file = os.path.join(out_dir,
-                            f'run%d_heatmap_{FLAGS.exp}_test_ood_p(x).pdf' % FLAGS.repeat_id)
-    plot_heatmap(n, data, plt_file)
-
 
 if __name__ == '__main__':
   app.run(main)
