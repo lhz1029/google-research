@@ -60,7 +60,7 @@ FLAGS = flags.FLAGS
 REG_WEIGHT_LIST = [0, 10, 100]
 MUTATION_RATE_LIST = [0.1, 0.2, 0.3]
 
-output_file = "ood_eval.csv"
+output_file = "ood_eval_03_03_21.csv"
 
 def load_datasets(exp, data_dir):
   if exp == 'fashion-mnist':
@@ -71,9 +71,9 @@ def load_datasets(exp, data_dir):
     datasets = utils.load_fmnist_datasets(data_dir, out_data='hflip')
   elif exp == 'fashion-omniglot':
     datasets = utils.load_fmnist_datasets(data_dir, out_data='omniglot')
-  elif exp == 'fashion-gaussian':
+  elif exp == 'fashion-gaussian':  # TODO need to deal with negatives
     datasets = utils.load_fmnist_datasets(data_dir, out_data='gaussian')
-  elif exp == 'fashion-uniform':
+  elif exp == 'fashion-uniform':  # TODO unif is uniform dist, but it's sometimes actually "constant" in the lit
     datasets = utils.load_fmnist_datasets(data_dir, out_data='unif')
   elif exp == 'mnist-fashion':
     datasets = utils.load_mnist_datasets(data_dir)
@@ -217,6 +217,11 @@ def load_data_and_model_and_pred(exp,
   log_probs_ood = preds_ood['log_probs']
   np.save(f'{FLAGS.model_dir}/log_probs_in', log_probs_in)
   np.save(f'{FLAGS.model_dir}/log_probs_ood', log_probs_ood)
+  if return_per_pixel:
+    log_probs_per_pixel_in = preds_in['log_probs_per_pixel']
+    log_probs_per_pixel_ood = preds_ood['log_probs_per_pixel']
+    np.save(f'{FLAGS.model_dir}/log_probs_per_pixel_in', log_probs_per_pixel_in)
+    np.save(f'{FLAGS.model_dir}/log_probs_per_pixel_ood', log_probs_per_pixel_ood)
   return preds_in, preds_ood, grad_in, grad_ood
 
 
@@ -249,11 +254,11 @@ def plot_heatmap(n, data, plt_file, colorbar=True):
 def main(unused_argv):
   # import pandas as pd
   # df = pd.read_csv(output_file)
-  # df.columns=['model', 'exp', 'norm', 'auc']
-  # results = df[(df.model==FLAGS.model_dir)&(df.exp==FLAGS.exp)]
-  # if results.shape > 0:
-  #   print(f"{FLAGS.model_dir}, {FLAGS.exp} already run")
-  #   import sys; sys.exit()
+  # if df.shape[0] > 0:
+  #   df.columns=['model', 'exp', 'norm', 'auc']
+  #   results = df[(df.model==FLAGS.model_dir)&(df.exp==FLAGS.exp)]
+  #   if results.shape[0] > 0:
+  #     print(f"{FLAGS.model_dir}, {FLAGS.exp} already run")
 
   # write results to file
   out_dir = os.path.join(FLAGS.model_dir, 'results')
@@ -273,6 +278,14 @@ def main(unused_argv):
       'test',
       'test',
       return_per_pixel=True)
+  # np.save('in_img.npy', preds_in['images'][:5])
+  # np.save('ood_img.npy', preds_ood['images'][:5])
+  # print(preds_in['log_probs'][:5], preds_ood['log_probs'][:5])
+  # auc = utils.compute_auc(
+  #   preds_in['log_probs'], preds_ood['log_probs'], pos_label=0)
+  # print(sum(preds_in['log_probs']))
+  # print(auc)
+  # import sys; sys.exit()
   
   print(sum(preds_in['log_probs']))
   with open('evals_likelihood', 'a') as f:
@@ -294,6 +307,7 @@ def main(unused_argv):
   #     -dist(preds_in), -dist(preds_ood), pos_label=0)
 
   def emd(mins, maxes, label, norm, per_image):
+    """ Note: currently only looking at as many images as exist in the in dist sample """
     mins = np.minimum(np.maximum(mins, np.zeros_like(mins)), np.ones_like(mins) * 255)
     maxes = np.minimum(np.maximum(maxes, np.zeros_like(maxes)), np.ones_like(maxes) * 255)
     # support distance, not wasserstein
@@ -394,7 +408,7 @@ def main(unused_argv):
       preds_in['log_probs'], preds_ood['log_probs'], pos_label=0)
   with open(output_file, 'a') as f:
     writer = csv.writer(f)
-    writer.writerow([FLAGS.model_dir, FLAGS.exp, 'mle', auc_dist])
+    writer.writerow([FLAGS.model_dir, FLAGS.exp, 'mle', auc])
   # with open(output_file, 'a') as f:
   #     f.write('{} mle: {}\n'.format(FLAGS.model_dir, auc))
   # with open('evals_mle2.txt', 'a') as f:
