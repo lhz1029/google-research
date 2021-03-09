@@ -524,7 +524,7 @@ class PixelCNN(distribution.Distribution):
         self.scales = tf.squeeze(scales, [-1])
       else:
         self.locs = locs
-        self.scales = locs
+        self.scales = scales
       # locs = tf.Print(locs, [tf.shape(locs), tf.shape(scales)],'locs and scales', summarize=10)
       return locs, scales
     # for evaluation, to get log probs
