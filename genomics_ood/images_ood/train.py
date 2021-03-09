@@ -82,6 +82,8 @@ flags.DEFINE_boolean('corr_constraint', False, 'Whether to provide constraint th
 flags.DEFINE_boolean('small_data', False, 'If true, train and validate on 5 data points')
 flags.DEFINE_boolean('wasserstein', False, 'If true, train and validate on 5 data points')
 flags.DEFINE_integer('wnorm', 1, 'wasserstein norm')
+flags.DEFINE_boolean('pixel_hist', False, 'plot tb histograms')
+flags.DEFINE_boolean('binarize', False, 'binarize (only for fashion/mnist)')
 
 FLAGS = flags.FLAGS
 
@@ -102,6 +104,12 @@ def main(unused_argv):
   for sub_dir in out_dir, job_dir, job_model_dir, job_log_dir:
     tf.compat.v1.gfile.MakeDirs(sub_dir)
 
+  if FLAGS.exp in ['fashion', 'mnist']:
+    n_dim = 28
+  elif FLAGS.exp == 'cifar':
+    n_dim = 32
+  elif FLAGS.exp == 'single_pixel':
+    n_dim = 1
   params = {
       'job_model_dir': job_model_dir,
       'job_log_dir': job_log_dir,
@@ -122,8 +130,8 @@ def main(unused_argv):
       'momentum2': FLAGS.momentum2,
       'eval_every': FLAGS.eval_every,
       'save_im': FLAGS.save_im,
-      'n_dim': 28 if FLAGS.exp in ['fashion', 'mnist']  else 32,
-      'n_channel': 1 if FLAGS.exp in ['fashion', 'mnist'] else 3,
+      'n_dim': n_dim,
+      'n_channel': 1 if FLAGS.exp in ['fashion', 'mnist', 'single_pixel'] else 3,
       'exp': FLAGS.exp,
       'rescale_pixel_value': FLAGS.rescale_pixel_value,
   }
@@ -141,11 +149,13 @@ def main(unused_argv):
   tf.compat.v1.keras.backend.set_session(sess)
   # Load the datasets
   if FLAGS.exp == 'fashion':
-    datasets = utils.load_fmnist_datasets(FLAGS.data_dir)
+    datasets = utils.load_fmnist_datasets(FLAGS.data_dir, binarize=FLAGS.binarize)
   elif FLAGS.exp == 'mnist':
-    datasets = utils.load_mnist_datasets(FLAGS.data_dir)
-  else:
+    datasets = utils.load_mnist_datasets(FLAGS.data_dir, binarize=FLAGS.binarize)
+  elif FLAGS.exp == 'cifar':
     datasets = utils.load_cifar_datasets(FLAGS.data_dir)
+  elif FLAGS.exp == 'single_pixel':
+    datasets = utils.load_single_pixel_datasets(FLAGS.data_dir)
   
   if FLAGS.small_data:
     datasets['tr_in'] = datasets['tr_in'][:5]
@@ -256,6 +266,14 @@ def main(unused_argv):
       tf.compat.v1.summary.scalar('loss', loss),
       tf.compat.v1.summary.scalar('train/learning_rate', learning_rate)
   ]
+  if FLAGS.pixel_hist:
+    summaries.append(tf.compat.v1.summary.histogram('locs', dist.locs))
+    summaries.append(tf.compat.v1.summary.histogram('scales', dist.scales))
+    if FLAGS.exp == 'fashion':
+      pixels = tf.expand_dims(tr_in_im['image'], axis=-1)
+    elif FLAGS.exp == 'cifar':
+      pixels = tr_in_im['image']
+    summaries.append(tf.compat.v1.summary.histogram('locs', dist.locs - pixels))
   if FLAGS.deriv_constraint or FLAGS.corr_constraint:
     summaries.append(tf.compat.v1.summary.scalar('penalty', tf.reduce_mean(penalty)))
   merged_tr = tf.compat.v1.summary.merge(summaries)
