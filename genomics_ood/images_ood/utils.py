@@ -32,7 +32,7 @@ import pickle
 import cv2
 
 
-def load_tfdata_from_np(np_file, flip=None):
+def load_tfdata_from_np(np_file, flip=None, binarize=False):
   try:
     with tf.compat.v1.gfile.Open(np_file, mode='rb') as f:
       images = np.load(f)
@@ -44,36 +44,48 @@ def load_tfdata_from_np(np_file, flip=None):
       images = np.array([np.flipud(img) for img in images])
     elif flip == 'h':
       images = np.array([np.fliplr(img) for img in images])
+    if binarize:
+      images[:] = np.where(images > 127.5, 1, 0)
+      assert len(np.unique(images.flatten())) == 2, f"Too many pixel values: {np.unique(images.flatten())}"
     labels = images
   dataset = tf.compat.v1.data.Dataset.from_tensor_slices(
       (images, labels)).map(tensor_slices_preprocess)
   return dataset
 
-def load_fmnist_datasets(data_dir, out_data='mnist'):
-  """Load fashionMNIST and MNIST dataset from np array."""
-  tr_in = load_tfdata_from_np(os.path.join(data_dir, 'fashion_mnist_train.npy'))
-  val_in = load_tfdata_from_np(os.path.join(data_dir, 'fashion_mnist_val.npy'))
-  test_in = load_tfdata_from_np(
-      os.path.join(data_dir, 'fashion_mnist_test.npy'))
-  test1_in = load_tfdata_from_np(os.path.join(data_dir, 'fashion_mnist_test1.npy'))
+def load_single_pixel_datasets(data_dir=None):
+  d = {}
+  for key in ['tr_in', 'val_in']:
+    images = np.random.logistic(loc=100, scale=10, size=(10000, 1, 1, 1))
+    labels = images
+    d[key] = tf.compat.v1.data.Dataset.from_tensor_slices(
+    (images, labels)).map(tensor_slices_preprocess)
+  return d
 
-  val_ood = load_tfdata_from_np(os.path.join(data_dir, 'notmnist.npy'))
-  test1_ood = load_tfdata_from_np(os.path.join(data_dir, 'mnist_test1.npy'))
+def load_fmnist_datasets(data_dir, out_data='mnist', binarize=False):
+  """Load fashionMNIST and MNIST dataset from np array."""
+  tr_in = load_tfdata_from_np(os.path.join(data_dir, 'fashion_mnist_train.npy'), binarize=binarize)
+  val_in = load_tfdata_from_np(os.path.join(data_dir, 'fashion_mnist_val.npy'), binarize=binarize)
+  test_in = load_tfdata_from_np(
+      os.path.join(data_dir, 'fashion_mnist_test.npy'), binarize=binarize)
+  test1_in = load_tfdata_from_np(os.path.join(data_dir, 'fashion_mnist_test1.npy'), binarize=binarize)
+
+  val_ood = load_tfdata_from_np(os.path.join(data_dir, 'notmnist.npy'), binarize=binarize)
+  test1_ood = load_tfdata_from_np(os.path.join(data_dir, 'mnist_test1.npy'), binarize=binarize)
   if out_data == 'mnist':
-    test_ood = load_tfdata_from_np(os.path.join(data_dir, 'mnist_test.npy'))
+    test_ood = load_tfdata_from_np(os.path.join(data_dir, 'mnist_test.npy'), binarize=binarize)
   elif out_data == 'hflip':
     test_ood = load_tfdata_from_np(
-      os.path.join(data_dir, 'fashion_mnist_test.npy'), flip='h')
+      os.path.join(data_dir, 'fashion_mnist_test.npy'), flip='h', binarize=binarize)
   elif out_data == 'vflip':
     test_ood = load_tfdata_from_np(
-      os.path.join(data_dir, 'fashion_mnist_test.npy'), flip='v')
+      os.path.join(data_dir, 'fashion_mnist_test.npy'), flip='v', binarize=binarize)
   elif out_data == 'unif':
-    images = np.random.uniform(size=(10000, 32, 32, 3))
+    images = np.random.uniform(size=(10000, 28, 28, 3))
     labels = images
     test_ood = tf.compat.v1.data.Dataset.from_tensor_slices(
       (images, labels)).map(tensor_slices_preprocess)
   elif out_data == 'gaussian':
-    images = np.random.normal(size=(10000, 32, 32, 3))
+    images = np.random.normal(size=(10000, 28, 28, 3))
     labels = images
     test_ood = tf.compat.v1.data.Dataset.from_tensor_slices(
       (images, labels)).map(tensor_slices_preprocess)
@@ -161,7 +173,8 @@ def load_cifar_datasets(data_dir, out_data='svhn'):
   elif out_data == 'cifar100':
     with open(os.path.join(data_dir, 'cifar-100-python', 'test'), 'rb') as f:
       data = pickle.load(f, encoding='bytes')[b'data']
-      images = data.reshape((10000, 32, 32, 3))
+      images = data.reshape((10000, 3, 32, 32))
+      images = np.transpose(images, (0, 2, 3, 1))
       labels = images
     test_ood = tf.compat.v1.data.Dataset.from_tensor_slices(
     (images, labels)).map(tensor_slices_preprocess)
