@@ -45,7 +45,7 @@ def load_tfdata_from_np(np_file, flip=None, binarize=False):
     elif flip == 'h':
       images = np.array([np.fliplr(img) for img in images])
     if binarize:
-      images[:] = np.where(images > 127.5, 1, 0)
+      images[:] = np.where(images > 127.5, 255, 0)
       assert len(np.unique(images.flatten())) == 2, f"Too many pixel values: {np.unique(images.flatten())}"
     labels = images
   dataset = tf.compat.v1.data.Dataset.from_tensor_slices(
@@ -56,6 +56,15 @@ def load_single_pixel_datasets(data_dir=None):
   d = {}
   for key in ['tr_in', 'val_in']:
     images = np.random.logistic(loc=100, scale=10, size=(10000, 1, 1, 1))
+    labels = images
+    d[key] = tf.compat.v1.data.Dataset.from_tensor_slices(
+    (images, labels)).map(tensor_slices_preprocess)
+  return d
+
+def load_ones(data_dir=None):
+  d = {}
+  for key in ['tr_in', 'val_in']:
+    images = np.ones((128, 28, 28, 1))
     labels = images
     d[key] = tf.compat.v1.data.Dataset.from_tensor_slices(
     (images, labels)).map(tensor_slices_preprocess)
@@ -297,17 +306,25 @@ def eval_on_data(data,
                  dist,
                  sess,
                  return_per_pixel=False,
+                 logistic=True,
                  wasserstein=False):
   """predict for data and save log_prob to npy."""
 
   data_ds = data.map(preprocess_fn).batch(
       params['batch_size']).make_one_shot_iterator()
   data_im = data_ds.get_next()
-
-  if wasserstein:
-    log_prob = dist.log_prob(data_im['image'], return_per_pixel=return_per_pixel, dist_family='uniform')
-  else:  
+  
+  # NOTE: return_per_pixel collapses channels, e.g. for cifar
+  # log_prob is [b, h, w]
+  # emd is [b, h, w, c]
+  if logistic:  
     log_prob = dist.log_prob(data_im['image'], return_per_pixel=return_per_pixel)
+    if wasserstein:
+      emd = emd_logistic(dist.locs, dist.scales, data_im['image'], agg='conditional')
+  else:
+    log_prob = dist.log_prob(data_im['image'], return_per_pixel=return_per_pixel, dist_family='uniform')
+    if wasserstein:
+      emd = emd(dist.locs, dist.scales, data_im['image'], agg='conditional')
   # log_prob = dist.log_prob(data_im['image'], return_per_pixel=return_per_pixel)
   # image = tf.placeholder(tf.float32, shape=dist.image_shape)
   gradients = tf.gradients(log_prob, data_im['image'])[0]
@@ -319,19 +336,21 @@ def eval_on_data(data,
   grad_i_list = []
   locs_list = []
   scales_list = []
+  emd_i_list = []
 
   # eval on dataset
   while True:
     try:
       label, img = data_im['label'], data_im['image']
-      log_prob_np, label_np, image_np, grad_norm_np, locs_np, scales_np = sess.run(
-        [log_prob, label, img, grad_norm, dist.locs, dist.scales])
+      log_prob_np, label_np, image_np, grad_norm_np, locs_np, scales_np, emd_np = sess.run(
+        [log_prob, label, img, grad_norm, dist.locs, dist.scales, emd])
       grad_i_list.append(grad_norm_np)
       log_prob_i_list.append(np.expand_dims(log_prob_np, axis=-1))
       label_i_list += list(label_np.reshape(-1))
       image_i_list.append(image_np)
       locs_list.append(locs_np)
       scales_list.append(scales_np)
+      emd_i_list.append(np.expand_dims(emd_np, axis=-1))
 
     except tf.errors.OutOfRangeError:
       print('break')
@@ -341,18 +360,68 @@ def eval_on_data(data,
   log_prob_i_t_np = np.vstack(log_prob_i_list)
   log_prob_i_np = np.sum(
       log_prob_i_t_np.reshape(log_prob_i_t_np.shape[0], -1), axis=1)
+  emd_i_t_np = np.vstack(emd_i_list)
+  emd_i_np = np.sum(
+      emd_i_t_np.reshape(emd_i_t_np.shape[0], -1), axis=1)
+  print('emd shapes', emd_i_t_np.shape, emd_i_np.shape)
   label_i_np = np.array(label_i_list)
   image_i_np = np.squeeze(np.vstack(image_i_list)).reshape(
       -1, params['n_dim'], params['n_dim'], params['n_channel'])
   out = {
     'log_probs': log_prob_i_np, 'labels': label_i_np, 'images': image_i_np, 'grads': grad_i_np,
-    'locs': locs_list, 'scales': scales_list
+    'locs': locs_list, 'scales': scales_list, 'emds': emd_i_np
   }
+  # log_prob is [b, h, w]
+  # emd is [b, h, w, c]
   if return_per_pixel:
     out['log_probs_per_pixel'] = np.squeeze(log_prob_i_t_np)
+    out['emds_per_pixel'] = np.squeeze(emd_i_t_np)
   return out
 
-def emd(mins, maxes, label, penalty=100, norm=1, per_image=False):
+def shape_list(x):
+    """
+    Deal with dynamic shape in tensorflow cleanly
+    """
+    ps = x.get_shape().as_list()
+    ts = tf.shape(input=x)
+    return [ts[i] if ps[i] is None else ps[i] for i in range(len(ps))]
+
+def emd_logistic(locs, scales, labels, agg='batch'):
+  # grid is [256, b, h, w, c]
+  # first axis goes 0-255
+  # locs = tf.Print(locs, [tf.shape(locs), tf.shape(scales), tf.shape(labels)], 'shape before', summarize=10)
+  b, h, w, c = shape_list(labels)
+  grid = tf.reshape(tf.repeat(tf.cast(tf.range(256), tf.float32), b * h * w * c), (256, b, h, w, c))
+  # [b, h, w, m, c] -> [1, b, h, w, c]
+  locs = tf.reshape(tf.repeat(tf.squeeze(locs, axis=-2), 256), (256, b, h, w, c))
+  scales = tf.reshape(tf.repeat(tf.squeeze(scales, axis=-2), 256), (256, b, h, w, c))
+  labels = tf.reshape(tf.repeat(labels, 256), (256, b, h, w, c))
+  # locs = tf.Print(locs, [tf.shape(locs), tf.shape(scales), tf.shape(labels)], 'locs after', summarize=10)
+  probas = (
+    tf.where(
+      tf.math.equal(grid, 0),
+      tf.math.sigmoid(tf.math.divide(0 + .5 - locs,scales)),
+      tf.where(
+        tf.math.equal(grid, 1),
+        1 - tf.math.sigmoid(tf.math.divide(0 - .5 - locs,scales)),
+        tf.math.sigmoid(tf.math.divide(grid + .5 - locs, scales)) - tf.math.sigmoid(tf.math.divide(grid - .5 - locs, scales))
+      )
+    )
+  )
+  # tf.debugging.assert_near(tf.reduce_sum(probas, axis=0), 1)
+  loss = tf.reduce_sum(probas * tf.math.square(grid - labels), axis=0)
+  # loss == loss * 1 elementwise?
+  tf.debugging.assert_near(loss, loss * tf.reduce_sum(probas, axis=0)).mark_used()
+  loss = tf.Print(loss, [locs, scales, labels, grid, probas, loss], summarize=10)
+  if agg=='image':
+    return tf.reduce_sum(loss, axis=(1, 2, 3))
+  # per_pixel and don't aggregate by channel
+  elif agg=='conditional':
+    return loss
+  elif agg =='batch':
+    return tf.reduce_sum(loss)
+
+def emd(mins, maxes, label, penalty=100, norm=1, agg='batch'):
   if norm == 0:
     loss = tf.math.abs(label - tf.math.divide(mins + maxes, 2))
   if norm == 1:
@@ -372,7 +441,12 @@ def emd(mins, maxes, label, penalty=100, norm=1, per_image=False):
      - label * (mins + maxes)
      + (tf.math.square(mins) + tf.math.square(maxes) + tf.multiply(mins, maxes)) / 3
     )
-  if per_image:
+
+  if agg=='image':
     return tf.reduce_sum(loss, axis=(1, 2, 3))
-  else:
+  # per_pixel and don't aggregate by channel
+  elif agg=='conditional':
+    # [b, h, w, c]
+    return loss
+  elif agg =='batch':
     return tf.reduce_sum(loss)

@@ -84,6 +84,7 @@ flags.DEFINE_boolean('wasserstein', False, 'If true, train and validate on 5 dat
 flags.DEFINE_integer('wnorm', 1, 'wasserstein norm')
 flags.DEFINE_boolean('pixel_hist', False, 'plot tb histograms')
 flags.DEFINE_boolean('binarize', False, 'binarize (only for fashion/mnist)')
+flags.DEFINE_integer('dist_high', 255, 'max boundary for logistic')
 
 FLAGS = flags.FLAGS
 
@@ -104,7 +105,7 @@ def main(unused_argv):
   for sub_dir in out_dir, job_dir, job_model_dir, job_log_dir:
     tf.compat.v1.gfile.MakeDirs(sub_dir)
 
-  if FLAGS.exp in ['fashion', 'mnist']:
+  if FLAGS.exp in ['fashion', 'mnist', 'ones']:
     n_dim = 28
   elif FLAGS.exp == 'cifar':
     n_dim = 32
@@ -131,7 +132,7 @@ def main(unused_argv):
       'eval_every': FLAGS.eval_every,
       'save_im': FLAGS.save_im,
       'n_dim': n_dim,
-      'n_channel': 1 if FLAGS.exp in ['fashion', 'mnist', 'single_pixel'] else 3,
+      'n_channel': 1 if FLAGS.exp in ['fashion', 'mnist', 'single_pixel', 'ones'] else 3,
       'exp': FLAGS.exp,
       'rescale_pixel_value': FLAGS.rescale_pixel_value,
   }
@@ -152,6 +153,8 @@ def main(unused_argv):
     datasets = utils.load_fmnist_datasets(FLAGS.data_dir, binarize=FLAGS.binarize)
   elif FLAGS.exp == 'mnist':
     datasets = utils.load_mnist_datasets(FLAGS.data_dir, binarize=FLAGS.binarize)
+  elif FLAGS.exp == 'ones':
+    datasets = utils.load_ones(FLAGS.data_dir)
   elif FLAGS.exp == 'cifar':
     datasets = utils.load_cifar_datasets(FLAGS.data_dir)
   elif FLAGS.exp == 'single_pixel':
@@ -184,6 +187,7 @@ def main(unused_argv):
       num_logistic_mix=params['num_logistic_mix'],
       use_weight_norm=params['use_weight_norm'],
       rescale_pixel_value=params['rescale_pixel_value'],
+      high=FLAGS.dist_high,
   )
 
   # Define the training loss and optimizer
@@ -202,7 +206,8 @@ def main(unused_argv):
     maxes = tf.minimum(maxes, tf.ones_like(maxes) * 255)
     # mins = tf.Print(mins, [tf.reduce_min(mins), tf.reduce_max(mins), tf.reduce_min(maxes), tf.reduce_max(maxes), tf.reduce_min(tr_in_im['image']), tf.reduce_max(tr_in_im['image'])], summarize=10)
     # mins = tf.Print(mins, [tf.shape(mins), tf.shape(maxes), tf.shape(tr_in_im['image'])], "training", summarize=10)
-    mins = tf.Print(mins, [tf.reduce_sum(tf.cast(tf.math.equal(mins, maxes), dtype=tf.int32))], "min equals max", summarize=10)
+    # mins = tf.Print(mins, [tf.reduce_sum(tf.cast(tf.math.equal(mins, maxes), dtype=tf.int32))], "min equals max", summarize=10)
+    mins = tf.Print(mins, [mins, maxes], "min equals max", summarize=10)
     loss = utils.emd(mins, maxes, tr_in_im['image'], FLAGS.lambda_penalty, FLAGS.wnorm)
 
     val_mins, val_maxes = dist.log_prob(val_in_im['image'], return_per_pixel=True, dist_family='uniform', wasserstein=True)
@@ -220,6 +225,8 @@ def main(unused_argv):
     loss_val_in = utils.emd(val_mins, val_maxes, val_in_im['image'], FLAGS.lambda_penalty, FLAGS.wnorm)
   else:
     log_prob_i = dist.log_prob(tr_in_im['image'], return_per_pixel=False)
+    # log_prob_i = tf.Print(log_prob_i, [dist.locs, dist.scales], summarize=30, message="train locs and scales")
+    # log_prob_i = tf.Print(log_prob_i, [log_prob_i], summarize=10, message="train log probs")
     if FLAGS.deriv_constraint:
         img = tf.reshape(tr_in_im['image'], [tf.shape(tr_in_im['image'])[0], -1])
         # proportion of zeros is not differentiable
@@ -246,6 +253,8 @@ def main(unused_argv):
     loss = -tf.reduce_mean(log_prob_i)
 
     log_prob_i_val_in = dist.log_prob(val_in_im['image'])
+    # log_prob_i_val_in = tf.Print(log_prob_i_val_in, [dist.locs, dist.scales], summarize=30, message="val locs and scales")
+    # log_prob_i_val_in = tf.Print(log_prob_i_val_in, [log_prob_i_val_in], summarize=10, message="val log probs")
     loss_val_in = -tf.reduce_mean(log_prob_i_val_in)
 
   global_step = tf.compat.v1.train.get_or_create_global_step()
@@ -269,10 +278,12 @@ def main(unused_argv):
   if FLAGS.pixel_hist:
     summaries.append(tf.compat.v1.summary.histogram('locs', dist.locs))
     summaries.append(tf.compat.v1.summary.histogram('scales', dist.scales))
-    if FLAGS.exp == 'fashion':
+    if FLAGS.exp in ['fashion', 'ones']:
       pixels = tf.expand_dims(tr_in_im['image'], axis=-1)
     elif FLAGS.exp == 'cifar':
       pixels = tr_in_im['image']
+    else:
+      pixels = tf.ones_like(dist.locs)
     summaries.append(tf.compat.v1.summary.histogram('locs', dist.locs - pixels))
   if FLAGS.deriv_constraint or FLAGS.corr_constraint:
     summaries.append(tf.compat.v1.summary.scalar('penalty', tf.reduce_mean(penalty)))
@@ -298,7 +309,9 @@ def main(unused_argv):
   # Train the model
   with sess.as_default():  # this is a must otherwise localhost error
     for step in range(prev_step, FLAGS.total_steps + 1, 1):
+      # TODO add optimizer back in
       _, loss_tr_np, summary = sess.run([tr_op, loss, merged_tr])
+      # loss_tr_np = sess.run([loss])
       if step % params['eval_every'] == 0:
         ckpt_name = 'model_step%d.ckpt' % step
         ckpt_path = os.path.join(job_model_dir, ckpt_name)
@@ -315,6 +328,7 @@ def main(unused_argv):
               (step, loss_tr_np, loss_val_in_np))
         import numpy as np
         if np.isnan(loss_tr_np) or np.isnan(loss_val_in_np):
+
           import sys; sys.exit()
         tr_writer.flush()
         val_in_writer.flush()

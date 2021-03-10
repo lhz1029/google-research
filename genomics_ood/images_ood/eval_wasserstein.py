@@ -55,16 +55,17 @@ flags.DEFINE_integer(
      'repeat_id=-1 indecates only one independent run.'))
 flags.DEFINE_boolean('color_classes', False, 'whether to color by class (only for fashion mnist and mnist)')
 flags.DEFINE_boolean('logistic', False, 'whether model is logistic')
+flags.DEFINE_boolean('binarize', False, 'whether to binarize data')
 FLAGS = flags.FLAGS
 
 REG_WEIGHT_LIST = [0, 10, 100]
 MUTATION_RATE_LIST = [0.1, 0.2, 0.3]
 
-output_file = "ood_eval_03_03_21.csv"
+output_file = "ood_eval_03_10_21.csv"
 
 def load_datasets(exp, data_dir):
   if exp == 'fashion-mnist':
-    datasets = utils.load_fmnist_datasets(data_dir)
+    datasets = utils.load_fmnist_datasets(data_dir, binarize=FLAGS.binarize)
   elif exp == 'fashion-vflip':
     datasets = utils.load_fmnist_datasets(data_dir, out_data='vflip')
   elif exp == 'fashion-hflip':
@@ -182,7 +183,8 @@ def load_data_and_model_and_pred(exp,
       dist,
       sess,
       return_per_pixel=return_per_pixel,
-      wasserstein=True if not FLAGS.logistic else False)
+      logistic=FLAGS.logistic,
+      wasserstein=True)
   preds_ood = utils.eval_on_data(
       datasets['%s_ood' % eval_mode_ood],
       utils.image_preprocess,
@@ -190,7 +192,8 @@ def load_data_and_model_and_pred(exp,
       dist,
       sess,
       return_per_pixel=return_per_pixel,
-      wasserstein=True if not FLAGS.logistic else False)
+      logistic=FLAGS.logistic,
+      wasserstein=True)
   grad_in = preds_in['grads']
   grad_ood = preds_ood['grads']
   grad_in = np.array(grad_in)
@@ -217,11 +220,18 @@ def load_data_and_model_and_pred(exp,
   log_probs_ood = preds_ood['log_probs']
   np.save(f'{FLAGS.model_dir}/log_probs_in', log_probs_in)
   np.save(f'{FLAGS.model_dir}/log_probs_ood', log_probs_ood)
+  emds_in = preds_in['emds']
+  emds_ood = preds_ood['emds']
+  np.save(f'{FLAGS.model_dir}/emds_in', emds_in)
+  np.save(f'{FLAGS.model_dir}/emds_ood', emds_ood)
   if return_per_pixel:
     log_probs_per_pixel_in = preds_in['log_probs_per_pixel']
     log_probs_per_pixel_ood = preds_ood['log_probs_per_pixel']
     np.save(f'{FLAGS.model_dir}/log_probs_per_pixel_in', log_probs_per_pixel_in)
     np.save(f'{FLAGS.model_dir}/log_probs_per_pixel_ood', log_probs_per_pixel_ood)
+    if 'emds_per_pixel' in preds_in:
+      np.save(f'{FLAGS.model_dir}/emds_per_pixel_in', preds_in['emds_per_pixel'])
+      np.save(f'{FLAGS.model_dir}/emds_per_pixel_ood', preds_ood['emds_per_pixel'])
   return preds_in, preds_ood, grad_in, grad_ood
 
 
@@ -288,6 +298,15 @@ def main(unused_argv):
   # import sys; sys.exit()
   
   print(sum(preds_in['log_probs']))
+  auc = utils.compute_auc(
+      preds_in['log_probs'], preds_ood['log_probs'], pos_label=0)
+  print('mle auc: ', auc)
+  # same thing
+  # auc = utils.compute_auc(
+  #     -preds_in['emds'], -preds_ood['emds'], pos_label=0)
+  auc = utils.compute_auc(
+      preds_in['emds'], preds_ood['emds'], pos_label=1)
+  print('emd auc: ', auc)
   with open('evals_likelihood', 'a') as f:
     f.write('{}: {}\n'.format(FLAGS.model_dir, sum(preds_in['log_probs'])))
 
