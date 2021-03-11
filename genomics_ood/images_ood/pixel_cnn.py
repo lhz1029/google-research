@@ -525,7 +525,7 @@ class PixelCNN(distribution.Distribution):
       # log_probs = tf.Print(log_probs, [tf.shape(logits), tf.shape(log_probs), tf.shape(self.locs), tf.shape(self.scales)], summarize=10, message="logits")
       class0 = log_probs[:, :, :, :, 0]
       class1 = log_probs[:, :, :, :, 1]
-      log_probs = tf.where(tf.cast(value, tf.bool), class0, class1)  #[B, H, W, C]
+      log_probs = tf.where(tf.cast(value, tf.bool), class1, class0)  #[B, H, W, C]
       if return_per_pixel:
         return tf.squeeze(log_probs, axis=-1)
       else:
