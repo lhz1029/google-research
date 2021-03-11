@@ -45,7 +45,7 @@ def load_tfdata_from_np(np_file, flip=None, binarize=False):
     elif flip == 'h':
       images = np.array([np.fliplr(img) for img in images])
     if binarize:
-      images[:] = np.where(images > 127.5, 255, 0)
+      images[:] = np.where(images > 127.5, 1, 0)
       assert len(np.unique(images.flatten())) == 2, f"Too many pixel values: {np.unique(images.flatten())}"
     labels = images
   dataset = tf.compat.v1.data.Dataset.from_tensor_slices(
@@ -402,8 +402,8 @@ def emd_logistic(locs, scales, labels, agg='batch'):
       tf.math.equal(grid, 0),
       tf.math.sigmoid(tf.math.divide(0 + .5 - locs,scales)),
       tf.where(
-        tf.math.equal(grid, 1),
-        1 - tf.math.sigmoid(tf.math.divide(0 - .5 - locs,scales)),
+        tf.math.equal(grid, 255),
+        1 - tf.math.sigmoid(tf.math.divide(255 - .5 - locs,scales)),
         tf.math.sigmoid(tf.math.divide(grid + .5 - locs, scales)) - tf.math.sigmoid(tf.math.divide(grid - .5 - locs, scales))
       )
     )
@@ -412,7 +412,7 @@ def emd_logistic(locs, scales, labels, agg='batch'):
   loss = tf.reduce_sum(probas * tf.math.square(grid - labels), axis=0)
   # loss == loss * 1 elementwise?
   tf.debugging.assert_near(loss, loss * tf.reduce_sum(probas, axis=0)).mark_used()
-  loss = tf.Print(loss, [locs, scales, labels, grid, probas, loss], summarize=10)
+  # loss = tf.Print(loss, [locs, scales, labels, grid, probas, loss], summarize=10)
   if agg=='image':
     return tf.reduce_sum(loss, axis=(1, 2, 3))
   # per_pixel and don't aggregate by channel
