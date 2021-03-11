@@ -85,12 +85,13 @@ flags.DEFINE_integer('wnorm', 1, 'wasserstein norm')
 flags.DEFINE_boolean('pixel_hist', False, 'plot tb histograms')
 flags.DEFINE_boolean('binarize', False, 'binarize (only for fashion/mnist)')
 flags.DEFINE_integer('dist_high', 255, 'max boundary for logistic')
-
+flags.DEFINE_string('dist', 'logistic', 'logistic|categorical')
 FLAGS = flags.FLAGS
 
 
 def main(unused_argv):
-
+  if FLAGS.dist == 'categorical':
+    assert FLAGS.binarize, "Must binarize data to use categorical distribution"
   out_dir = FLAGS.out_dir
 
   exp_dir = 'exp%s' % FLAGS.exp
@@ -224,9 +225,9 @@ def main(unused_argv):
     val_mins = tf.Print(val_mins, [tf.reduce_sum(tf.cast(tf.math.equal(val_mins, val_maxes), dtype=tf.int32))], "min equals max", summarize=10)
     loss_val_in = utils.emd(val_mins, val_maxes, val_in_im['image'], FLAGS.lambda_penalty, FLAGS.wnorm)
   else:
-    log_prob_i = dist.log_prob(tr_in_im['image'], return_per_pixel=False)
+    log_prob_i = dist.log_prob(tr_in_im['image'], return_per_pixel=False, dist_family=FLAGS.dist)
     # log_prob_i = tf.Print(log_prob_i, [dist.locs, dist.scales], summarize=30, message="train locs and scales")
-    # log_prob_i = tf.Print(log_prob_i, [log_prob_i], summarize=10, message="train log probs")
+    # log_prob_i = tf.Print(log_prob_i, [tf.shape(log_prob_i)], summarize=10, message="train log probs")
     if FLAGS.deriv_constraint:
         img = tf.reshape(tr_in_im['image'], [tf.shape(tr_in_im['image'])[0], -1])
         # proportion of zeros is not differentiable
@@ -252,7 +253,7 @@ def main(unused_argv):
         log_prob_i = log_prob_i - penalty
     loss = -tf.reduce_mean(log_prob_i)
 
-    log_prob_i_val_in = dist.log_prob(val_in_im['image'])
+    log_prob_i_val_in = dist.log_prob(val_in_im['image'], dist_family=FLAGS.dist)
     # log_prob_i_val_in = tf.Print(log_prob_i_val_in, [dist.locs, dist.scales], summarize=30, message="val locs and scales")
     # log_prob_i_val_in = tf.Print(log_prob_i_val_in, [log_prob_i_val_in], summarize=10, message="val log probs")
     loss_val_in = -tf.reduce_mean(log_prob_i_val_in)
@@ -311,7 +312,7 @@ def main(unused_argv):
     for step in range(prev_step, FLAGS.total_steps + 1, 1):
       # TODO add optimizer back in
       _, loss_tr_np, summary = sess.run([tr_op, loss, merged_tr])
-      # loss_tr_np = sess.run([loss])
+      # loss_tr_np, = sess.run([loss])
       if step % params['eval_every'] == 0:
         ckpt_name = 'model_step%d.ckpt' % step
         ckpt_path = os.path.join(job_model_dir, ckpt_name)
@@ -324,6 +325,7 @@ def main(unused_argv):
         loss_val_in_np, summary_val_in = sess.run([loss_val_in, merged_val_in])
         val_in_writer.add_summary(summary_val_in, step)
 
+        print(step, loss_tr_np, loss_val_in_np)
         print('step=%d, tr_in_loss=%.4f, val_in_loss=%.4f' %
               (step, loss_tr_np, loss_val_in_np))
         import numpy as np

@@ -517,6 +517,22 @@ class PixelCNN(distribution.Distribution):
       dist = self._make_mixture_dist(
           component_logits, locs, scales, return_per_pixel=return_per_pixel)
     # for training
+    elif dist_family == 'categorical':
+      self.locs = tf.squeeze(locs, [3])
+      self.scales = tf.squeeze(scales, [3])
+      logits = tf.stack([self.locs, self.scales], axis=-1)   # [B, H, W, C, 2]
+      log_probs = tf.nn.log_softmax(logits, axis=-1)  # [B, H, W, C, 2]
+      # log_probs = tf.Print(log_probs, [tf.shape(logits), tf.shape(log_probs), tf.shape(self.locs), tf.shape(self.scales)], summarize=10, message="logits")
+      class0 = log_probs[:, :, :, :, 0]
+      class1 = log_probs[:, :, :, :, 1]
+      log_probs = tf.where(tf.cast(value, tf.bool), class0, class1)  #[B, H, W, C]
+      if return_per_pixel:
+        return tf.squeeze(log_probs, axis=-1)
+      else:
+        log_probs = tf.reduce_sum(log_probs, axis=[1, 2, 3])
+        img_log_probs = tf.reshape(log_probs, image_batch_and_conditional_shape)
+        # img_log_probs = tf.Print(img_log_probs, [tf.shape(img_log_probs)], message="img_log_probs", summarize=10)
+        return img_log_probs
     elif dist_family == 'uniform' and wasserstein:
       # assert num_channels == 1, num_channels
       if num_channels == 1:
@@ -544,6 +560,7 @@ class PixelCNN(distribution.Distribution):
       dist = uniform.Uniform(low=tf.minimum(self.locs, self.scales), high=tf.maximum(self.locs, self.scales))
       if not return_per_pixel:
         dist = independent.Independent(dist, reinterpreted_batch_ndims=2)
+    # value = tf.Print(value, [tf.shape(value)], 'value_shape', summarize=10)
     log_px = dist.log_prob(value)
     if return_per_pixel:
       return log_px
