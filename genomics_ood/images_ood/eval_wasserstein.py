@@ -61,7 +61,7 @@ FLAGS = flags.FLAGS
 REG_WEIGHT_LIST = [0, 10, 100]
 MUTATION_RATE_LIST = [0.1, 0.2, 0.3]
 
-output_file = "ood_eval_03_10_21.csv"
+output_file = "ood_eval_emd_03_10_21.csv"
 
 def load_datasets(exp, data_dir):
   if exp == 'fashion-mnist':
@@ -307,6 +307,7 @@ def main(unused_argv):
   auc = utils.compute_auc(
       preds_in['emds'], preds_ood['emds'], pos_label=1)
   print('emd auc: ', auc)
+  import sys; sys.exit()
   with open('evals_likelihood', 'a') as f:
     f.write('{}: {}\n'.format(FLAGS.model_dir, sum(preds_in['log_probs'])))
 
@@ -359,9 +360,11 @@ def main(unused_argv):
   preds_ood['locs'] = np.concatenate(preds_ood['locs'])
   preds_ood['scales'] = np.concatenate(preds_ood['scales'])
   if FLAGS.logistic:
-    for norm in [0, 1, 2]:
+    for norm in [2, 0]:
       emd_in = []
       emd_ood = []
+      emd_in_bounded = []
+      emd_ood_bounded = []
       for i in range(len(preds_in['locs'])):
         flattened_locs_in = preds_in['locs'][i].flatten()
         flattened_scales_in = preds_in['scales'][i].flatten()
@@ -371,33 +374,62 @@ def main(unused_argv):
         flattened_images_ood = preds_ood['images'][i].flatten()
         logistic_in_samples = np.random.logistic(flattened_locs_in, flattened_scales_in, size=(100, flattened_locs_in.shape[0]))
         logistic_ood_samples = np.random.logistic(flattened_locs_ood, flattened_scales_ood, size=(100, flattened_locs_ood.shape[0]))
-        pixel_emd_in = 0
-        pixel_emd_ood = 0
+
+        logistic_in_samples_bounded = logistic_in_samples.copy()
+        logistic_ood_samples_bounded = logistic_ood_samples.copy()
+        logistic_in_samples_bounded = np.maximum(logistic_in_samples_bounded, np.zeros_like(logistic_in_samples_bounded))
+        logistic_in_samples_bounded = np.minimum(logistic_in_samples_bounded, np.ones_like(logistic_in_samples_bounded) * 255)
+        logistic_ood_samples_bounded = np.maximum(logistic_ood_samples_bounded, np.zeros_like(logistic_ood_samples_bounded))
+        logistic_ood_samples_bounded = np.minimum(logistic_ood_samples_bounded, np.ones_like(logistic_ood_samples_bounded) * 255)
+
+        # keeps track of all pixel emds
+        emd_p_in = []
+        emd_p_ood = []
+        emd_p_in_bounded = []
+        emd_p_ood_bounded = []
         for j in range(flattened_locs_in.shape[0]):
           # print('num_samples ', logistic_in_samples[:, j].shape)
           if norm == 0:
-            pixel_emd_in += np.abs(logistic_in_samples[:, j] - [flattened_images_in[j]]).mean()
-            pixel_emd_ood += np.abs(logistic_ood_samples[:, j] - [flattened_images_ood[j]]).mean()
+            pixel_emd_in = np.abs(logistic_in_samples[:, j] - [flattened_images_in[j]]).mean()
+            pixel_emd_ood = np.abs(logistic_ood_samples[:, j] - [flattened_images_ood[j]]).mean()
           if norm == 1:
-            pixel_emd_in += ot.emd2_1d(logistic_in_samples[:, j], [flattened_images_in[j]], metric='minkowski')
-            pixel_emd_ood += ot.emd2_1d(logistic_ood_samples[:, j], [flattened_images_ood[j]], metric='minkowski')
+            pixel_emd_in = ot.emd2_1d(logistic_in_samples[:, j], [flattened_images_in[j]], metric='minkowski')
+            pixel_emd_ood = ot.emd2_1d(logistic_ood_samples[:, j], [flattened_images_ood[j]], metric='minkowski')
           elif norm == 2:
-            pixel_emd_in += ot.emd2_1d(logistic_in_samples[:, j], [flattened_images_in[j]])
-            pixel_emd_ood += ot.emd2_1d(logistic_ood_samples[:, j], [flattened_images_ood[j]])
-        emd_in.append(pixel_emd_in)
-        emd_ood.append(pixel_emd_ood)
+            pixel_emd_in = ot.emd2_1d(logistic_in_samples[:, j], [flattened_images_in[j]])
+            pixel_emd_ood = ot.emd2_1d(logistic_ood_samples[:, j], [flattened_images_ood[j]])
+            pixel_emd_in_bounded = ot.emd2_1d(logistic_in_samples_bounded[:, j], [flattened_images_in[j]])
+            pixel_emd_ood_bounded = ot.emd2_1d(logistic_ood_samples_bounded[:, j], [flattened_images_ood[j]])
+          emd_p_in.append(pixel_emd_in)
+          emd_p_ood.append(pixel_emd_ood)
+          emd_p_in_bounded.append(pixel_emd_in_bounded)
+          emd_p_ood_bounded.append(pixel_emd_ood_bounded)
+        emd_in.append(emd_p_in)
+        emd_ood.append(emd_p_ood)
+        emd_in_bounded.append(emd_p_in_bounded)
+        emd_ood_bounded.append(emd_p_ood_bounded)
       print('emd_in', np.array(emd_in).shape)
       print('emd_ood', np.array(emd_ood).shape)
+      np.save(f'{FLAGS.model_dir}/emd_cont_in_{norm}', emd_in)
+      np.save(f'{FLAGS.model_dir}/emd_cont_ood_{norm}', emd_ood)
+      np.save(f'{FLAGS.model_dir}/emd_cont_in_bounded_{norm}', emd_in_bounded)
+      np.save(f'{FLAGS.model_dir}/emd_cont_ood_bounded_{norm}', emd_ood_bounded)
       auc_dist = utils.compute_auc(
-        -np.array(emd_in),
-        -np.array(emd_ood),
+        -np.array(emd_in).sum(axis=1),
+        -np.array(emd_ood).sum(axis=1),
         pos_label=0
       )
       print('w norm {} {}'.format(norm, auc_dist))
+      auc_dist_bounded = utils.compute_auc(
+        -np.array(emd_in_bounded).sum(axis=1),
+        -np.array(emd_ood_bounded).sum(axis=1),
+        pos_label=0
+      )
+      print('w norm bounded {} {}'.format(norm, auc_dist_bounded))
       with open(output_file, 'a') as f:
         writer = csv.writer(f)
         writer.writerow([FLAGS.model_dir, FLAGS.exp, norm, auc_dist])
-        # f.write('{} w{}: {}\n'.format(FLAGS.model_dir, norm, auc_dist))
+      #   # f.write('{} w{}: {}\n'.format(FLAGS.model_dir, norm, auc_dist))
   else:
     for norm in [0, 1, 2]:
       emd_in = []
