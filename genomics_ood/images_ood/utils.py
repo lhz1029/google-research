@@ -306,7 +306,7 @@ def eval_on_data(data,
                  dist,
                  sess,
                  return_per_pixel=False,
-                 logistic=True,
+                 dist_family='logistic',
                  wasserstein=False):
   """predict for data and save log_prob to npy."""
 
@@ -317,12 +317,17 @@ def eval_on_data(data,
   # NOTE: return_per_pixel collapses channels, e.g. for cifar
   # log_prob is [b, h, w]
   # emd is [b, h, w, c]
-  if logistic:  
-    log_prob = dist.log_prob(data_im['image'], return_per_pixel=return_per_pixel)
+  log_prob = dist.log_prob(data_im['image'], return_per_pixel=return_per_pixel, dist_family=dist_family)
+  if dist_family == 'logistic':
     if wasserstein:
       emd = emd_logistic(dist.locs, dist.scales, data_im['image'], agg='conditional')
-  else:
-    log_prob = dist.log_prob(data_im['image'], return_per_pixel=return_per_pixel, dist_family='uniform')
+  elif dist_family == 'categorical':
+    if wasserstein:
+      import warnings
+      warnings.warn("emd for categorical not implemented correctly")
+      emd = log_prob
+      # raise NotImplemented("Wasserstein not implemented for categorical eval")
+  elif dist_family == 'uniform':
     if wasserstein:
       emd = emd(dist.locs, dist.scales, data_im['image'], agg='conditional')
   # log_prob = dist.log_prob(data_im['image'], return_per_pixel=return_per_pixel)
