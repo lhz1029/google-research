@@ -54,7 +54,7 @@ flags.DEFINE_integer(
      'repeat_id=i indicates the i-th independent run.',
      'repeat_id=-1 indecates only one independent run.'))
 flags.DEFINE_boolean('color_classes', False, 'whether to color by class (only for fashion mnist and mnist)')
-flags.DEFINE_boolean('logistic', False, 'whether model is logistic')
+flags.DEFINE_string('dist_family', 'logistic', 'logistic|uniform|categorical')
 flags.DEFINE_boolean('binarize', False, 'whether to binarize data')
 FLAGS = flags.FLAGS
 
@@ -175,6 +175,12 @@ def load_data_and_model_and_pred(exp,
 
   dist, params, sess = create_model_and_restore_ckpt(ckpt_file)
 
+  # samples = dist.sample(500)
+  # samples_np, = sess.run([samples])
+  # print(samples_np.shape)
+  # np.save(f'{FLAGS.model_dir}/samples', samples_np)
+  # import sys; sys.exit()
+
   # Evaluations
   preds_in = utils.eval_on_data(
       datasets['%s_in' % eval_mode_in],
@@ -183,7 +189,7 @@ def load_data_and_model_and_pred(exp,
       dist,
       sess,
       return_per_pixel=return_per_pixel,
-      logistic=FLAGS.logistic,
+      dist_family=FLAGS.dist_family,
       wasserstein=True)
   preds_ood = utils.eval_on_data(
       datasets['%s_ood' % eval_mode_ood],
@@ -192,7 +198,7 @@ def load_data_and_model_and_pred(exp,
       dist,
       sess,
       return_per_pixel=return_per_pixel,
-      logistic=FLAGS.logistic,
+      dist_family=FLAGS.dist_family,
       wasserstein=True)
   grad_in = preds_in['grads']
   grad_ood = preds_ood['grads']
@@ -359,7 +365,7 @@ def main(unused_argv):
   preds_in['scales'] = np.concatenate(preds_in['scales'])
   preds_ood['locs'] = np.concatenate(preds_ood['locs'])
   preds_ood['scales'] = np.concatenate(preds_ood['scales'])
-  if FLAGS.logistic:
+  if FLAGS.dist_family == 'logistic':
     for norm in [2, 0]:
       emd_in = []
       emd_ood = []
@@ -430,7 +436,7 @@ def main(unused_argv):
         writer = csv.writer(f)
         writer.writerow([FLAGS.model_dir, FLAGS.exp, norm, auc_dist])
       #   # f.write('{} w{}: {}\n'.format(FLAGS.model_dir, norm, auc_dist))
-  else:
+  elif FLAGS.dist_family == 'uniform':
     for norm in [0, 1, 2]:
       emd_in = []
       emd_ood = []
