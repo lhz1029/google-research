@@ -401,10 +401,12 @@ class PixelCNN(distribution.Distribution):
         low=self._low,
         high=self._high)
 
+    # doesn't return channels
     dist = mixture_same_family.MixtureSameFamily(
         mixture_distribution=mixture_distribution,
         components_distribution=independent.Independent(
             logistic_dist, reinterpreted_batch_ndims=1))
+
     if return_per_pixel:
       return dist
     else:
@@ -518,9 +520,11 @@ class PixelCNN(distribution.Distribution):
           component_logits, locs, scales, return_per_pixel=return_per_pixel)
     # for training
     elif dist_family == 'categorical':
-      self.locs = tf.squeeze(locs, [3])
-      self.scales = tf.squeeze(scales, [3])
-      logits = tf.stack([self.locs, self.scales], axis=-1)   # [B, H, W, C, 2]
+      self.locs = locs
+      self.scales = scales
+      locs = tf.squeeze(locs, [3])
+      scales = tf.squeeze(scales, [3])
+      logits = tf.stack([locs, scales], axis=-1)   # [B, H, W, C, 2]
       log_probs = tf.nn.log_softmax(logits, axis=-1)  # [B, H, W, C, 2]
       # log_probs = tf.Print(log_probs, [tf.shape(logits), tf.shape(log_probs), tf.shape(self.locs), tf.shape(self.scales)], summarize=10, message="logits")
       class0 = log_probs[:, :, :, :, 0]
@@ -619,8 +623,20 @@ class PixelCNN(distribution.Distribution):
         minval=-1., maxval=1., dtype=self.dtype, seed=seed)
     inputs = samples_0 if conditional_input is None else [samples_0, h]
     params_0 = self.network(inputs, training=training)
-    samples_0 = self._sample_channels(*params_0, seed=seed)
+    # mixtures0, locs0, scales0 = params_0
+    # locs0 = tf.Print(locs0, [tf.reduce_min(locs0), tf.reduce_max(locs0), tf.shape(locs0)], summarize=10, message="locs")
+    # scales0 = tf.Print(scales0, [tf.reduce_min(scales0), tf.reduce_max(scales0), tf.shape(scales0)], summarize=10, message="scales")
+    # samples_0 = self._sample_channels(mixtures0, locs0, scales0, seed=seed)
 
+    mixtures0, locs0, scales0, coeffs0 = params_0
+    locs0 = tf.Print(locs0, [tf.reduce_min(locs0), tf.reduce_max(locs0), tf.shape(locs0)], summarize=10, message="locs")
+    scales0 = tf.Print(scales0, [tf.reduce_min(scales0), tf.reduce_max(scales0), tf.shape(scales0)], summarize=10, message="scales")
+    coeffs0 = tf.Print(coeffs0, [tf.reduce_min(coeffs0), tf.reduce_max(coeffs0), tf.shape(coeffs0)], summarize=10, message="coeffs")
+    mixtures0 = tf.Print(mixtures0, [tf.reduce_min(mixtures0), tf.reduce_max(mixtures0), tf.shape(mixtures0)], summarize=10, message="mixtures")
+    samples_0 = self._sample_channels(mixtures0, locs0, scales0, coeffs0, seed=seed)
+
+    # samples_0 = self._sample_channels(*params_0, seed=seed)
+    samples_0 = tf.Print(samples_0, [tf.reduce_min(samples_0), tf.reduce_max(samples_0), tf.shape(samples_0)], summarize=10, message="samples0")
     image_height, image_width, _ = tensorshape_util.as_list(self.event_shape)
     def loop_body(index, samples):
       """Loop for iterative pixel sampling.
@@ -659,9 +675,12 @@ class PixelCNN(distribution.Distribution):
     _, samples = tf.while_loop(
         loop_cond, loop_body, init_vars, parallel_iterations=1)
 
+    samples = tf.Print(samples, [tf.reduce_max(samples), tf.reduce_min(samples)], message="samples")
+
     if self._rescale_pixel_value:
       transformed_samples = (
           self._low + 0.5 * (self._high - self._low) * (samples + 1.))
+      transformed_samples = tf.Print(transformed_samples, [tf.reduce_max(transformed_samples), tf.reduce_min(transformed_samples)], message="transformed_samples")
       return tf.round(transformed_samples)
     else:
       return tf.round(samples)
@@ -719,7 +738,10 @@ class PixelCNN(distribution.Distribution):
 
       logistic_samp = logistic.Logistic(
           loc=loc, scale=scale_tensors[i]).sample(seed=seed)
-      logistic_samp = tf.clip_by_value(logistic_samp, -1., 1.)
+      if self._rescale_pixel_value:
+        logistic_samp = tf.clip_by_value(logistic_samp, -1., 1.)
+      else:
+        logistic_samp = tf.clip_by_value(logistic_samp, 0., 255.)
       channel_samples.append(logistic_samp)
 
     return tf.concat(channel_samples, axis=-1)
