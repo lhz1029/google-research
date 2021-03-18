@@ -42,13 +42,14 @@ import functools
 
 import numpy as np
 import tensorflow.compat.v1 as tf
-from tensorflow_probability.python.bijectors import shift
+from tensorflow_probability.python.bijectors import shift, scale
 from tensorflow_probability.python.distributions import categorical
 from tensorflow_probability.python.distributions import distribution
 from tensorflow_probability.python.distributions import independent
 from tensorflow_probability.python.distributions import logistic
 from tensorflow_probability.python.distributions import bernoulli
 from tensorflow_probability.python.distributions import uniform
+from tensorflow_probability.python.distributions import kumaraswamy
 from tensorflow_probability.python.distributions import mixture_same_family
 from tensorflow_probability.python.distributions import quantized_distribution
 from tensorflow_probability.python.distributions import transformed_distribution
@@ -329,6 +330,7 @@ class PixelCNN(distribution.Distribution):
         raise ValueError('`image_shape` must have length 3, representing '
                          '[height, width, channels] dimensions.')
 
+      self.high = high
       self._high = tf.cast(high, self.dtype)
       self._low = tf.cast(low, self.dtype)
       self._rescale_pixel_value = rescale_pixel_value
@@ -365,7 +367,8 @@ class PixelCNN(distribution.Distribution):
                          component_logits,
                          locs,
                          scales,
-                         return_per_pixel=False):
+                         return_per_pixel=False,
+                         dist_family='logistic'):
     """Builds a mixture of quantized logistic distributions.
 
     Args:
@@ -383,7 +386,9 @@ class PixelCNN(distribution.Distribution):
     Returns:
       dist: A quantized logistic mixture `tfp.distribution` over the input data.
     """
-    mixture_distribution = categorical.Categorical(logits=component_logits)
+    # mixture_distribution = categorical.Categorical(logits=component_logits)
+    # need to add dim for channels
+    mixture_distribution = categorical.Categorical(logits=tf.expand_dims(component_logits, axis=-2))
 
     if self._rescale_pixel_value:
       # Convert distribution parameters for pixel values in
@@ -393,24 +398,47 @@ class PixelCNN(distribution.Distribution):
     
     self.locs = locs
     self.scales = scales
+    # mixture dims needs to be last dim
+    locs = tf.transpose(locs, perm=[0, 1, 2, 4, 3])
+    scales = tf.transpose(scales, perm=[0, 1, 2, 4, 3])
 
-    logistic_dist = quantized_distribution.QuantizedDistribution(
-        distribution=transformed_distribution.TransformedDistribution(
-            distribution=logistic.Logistic(loc=locs, scale=scales),
-            bijector=shift.Shift(shift=tf.cast(-0.5, self.dtype))),
-        low=self._low,
-        high=self._high)
+    if dist_family == 'logistic':
+      logistic_dist = quantized_distribution.QuantizedDistribution(
+          distribution=transformed_distribution.TransformedDistribution(
+              distribution=logistic.Logistic(loc=locs, scale=scales),
+              bijector=shift.Shift(shift=tf.cast(-0.5, self.dtype))),
+          low=self._low,
+          high=self._high)
+    
+    elif dist_family == 'kumaraswamy':
+      logistic_dist = quantized_distribution.QuantizedDistribution(
+          distribution=transformed_distribution.TransformedDistribution(
+              distribution=kumaraswamy.Kumaraswamy(concentration1=tf.maximum(locs, tf.zeros_like(locs) + 1e-18), concentration0=tf.maximum(scales, tf.zeros_like(scales) + 1e-18)),
+              bijector=scale.Scale(scale=tf.cast(256., self.dtype))(shift.Shift(shift=tf.cast(-0.5, self.dtype)))),
+          low=self._low,
+          high=self._high)
+      # logistic_dist = transformed_distribution.TransformedDistribution(
+      #         distribution=kumaraswamy.Kumaraswamy(concentration1=tf.maximum(locs, tf.zeros_like(locs) + 1e-18), concentration0=tf.maximum(scales, tf.zeros_like(scales) + 1e-18)),
+      #         bijector=scale.Scale(scale=tf.cast(256., self.dtype))(shift.Shift(shift=tf.cast(-0.5, self.dtype))))
+      # logistic_dist = kumaraswamy.Kumaraswamy(concentration1=tf.maximum(locs, tf.zeros_like(locs) + 1e-18), concentration0=tf.maximum(scales, tf.zeros_like(scales) + 1e-18))
 
     # doesn't return channels
+    # dist = mixture_same_family.MixtureSameFamily(
+    #     mixture_distribution=mixture_distribution,
+    #     components_distribution=independent.Independent(
+    #         logistic_dist, reinterpreted_batch_ndims=1))
+
+    # includes channels when calculating per-pixel log probs
     dist = mixture_same_family.MixtureSameFamily(
         mixture_distribution=mixture_distribution,
-        components_distribution=independent.Independent(
-            logistic_dist, reinterpreted_batch_ndims=1))
+        components_distribution=logistic_dist)
 
     if return_per_pixel:
       return dist
     else:
-      return independent.Independent(dist, reinterpreted_batch_ndims=2)
+      # return independent.Independent(dist, reinterpreted_batch_ndims=2)
+      # now that channel dim is still present, need to move over additional dim
+      return independent.Independent(dist, reinterpreted_batch_ndims=3)
 
   def _log_prob(self,
                 value,
@@ -516,8 +544,59 @@ class PixelCNN(distribution.Distribution):
       locs = tf.concat(loc_tensors, axis=-1)
 
     if dist_family == 'logistic':
-      dist = self._make_mixture_dist(
-          component_logits, locs, scales, return_per_pixel=return_per_pixel)
+      if self.high == 1:
+        self.locs = locs
+        self.scales = scales
+        locs = tf.squeeze(locs, [3])
+        scales = tf.squeeze(scales, [3])
+        log_probs = tf.where(
+          tf.math.equal(value, tf.zeros_like(value)),
+          tf.sigmoid(tf.math.divide((0 + .5 - locs), scales)),
+          1. - tf.sigmoid(tf.math.divide((self.high - .5 - locs), scales))
+        )
+        if return_per_pixel:
+          return tf.squeeze(log_probs, axis=-1)
+        else:
+          log_probs = tf.reduce_sum(log_probs, axis=[1, 2, 3])
+          img_log_probs = tf.reshape(log_probs, image_batch_and_conditional_shape)
+          return img_log_probs
+      else:
+        dist = self._make_mixture_dist(
+            component_logits, locs, scales, return_per_pixel=return_per_pixel, dist_family=dist_family)
+    elif dist_family == 'kumaraswamy':
+      # NOTE: check that pixelcnn only outputs positive numbers
+      self.locs = locs
+      self.scales = scales
+      locs = tf.squeeze(locs, [3])
+      scales = tf.squeeze(scales, [3])
+      # locs  = tf.Print(locs, [locs, tf.reduce_sum(tf.cast(tf.math.is_nan(locs), tf.int32))], message="locs are nan before")
+      # scales  = tf.Print(scales, [scales, tf.reduce_sum(tf.cast(tf.math.is_nan(scales), tf.int32))], message="scales are nan before")
+      # value is [0, 255] -> value is [0, 1]
+      lower = tf.math.divide(value, 256.)
+      upper = tf.math.divide(value + 1, 256.)
+      # value = tf.Print(value, [value, tf.math.pow(upper, locs), tf.math.pow((tf.ones_like(locs) - tf.math.pow(upper, locs)), scales)], summarize=10, message="value and segments")
+      # subtract 2 CDFs 
+      cdf_upper = tf.where(
+        tf.math.equal(upper, tf.cast(tf.ones_like(value), tf.float32)),
+        tf.ones_like(locs),
+        tf.ones_like(locs) - tf.math.pow((tf.ones_like(locs) - tf.math.pow(upper, locs)), scales)
+      )
+      cdf_lower = tf.where(
+        tf.math.equal(lower, tf.zeros_like(value)),
+        tf.zeros_like(locs),
+        tf.ones_like(locs) - tf.math.pow((tf.ones_like(locs) - tf.math.pow(lower, locs)), scales)
+      )
+      prob = cdf_upper - cdf_lower
+      log_probs = tf.where(tf.math.equal(prob, tf.zeros_like(prob)), tf.math.log(tf.ones_like(prob) * 1e-18), tf.math.log(cdf_upper - cdf_lower))
+      # log_probs = tf.Print(log_probs, [log_probs, cdf_lower, cdf_upper], summarize=10, message="log_probs, cdfs")
+      if return_per_pixel:
+        return tf.squeeze(log_probs, axis=-1)
+      else:
+        log_probs = tf.reduce_sum(log_probs, axis=[1, 2, 3])
+        img_log_probs = tf.reshape(log_probs, image_batch_and_conditional_shape)
+        return img_log_probs
+      # dist = self._make_mixture_dist(
+      #     component_logits, locs, scales, return_per_pixel=return_per_pixel, dist_family=dist_family)
     # for training
     elif dist_family == 'categorical':
       self.locs = locs
@@ -566,6 +645,7 @@ class PixelCNN(distribution.Distribution):
         dist = independent.Independent(dist, reinterpreted_batch_ndims=2)
     # value = tf.Print(value, [tf.shape(value)], 'value_shape', summarize=10)
     log_px = dist.log_prob(value)
+    # log_px = tf.Print(log_px, [log_px, dist.log_prob(tf.zeros_like(value))], summarize=30, message="per pixel lp")
     if return_per_pixel:
       return log_px
     else:
@@ -1093,12 +1173,21 @@ class _PixelCNNNetwork(tf.keras.layers.Layer):
     # Squeeze singleton dimension from component logits
     outputs[0] = tf.squeeze(outputs[0], axis=-1)
 
-    # Ensure scales are positive and do not collapse to near-zero
-    if self._rescale_pixel_value:
-      outputs[2] = tf.nn.softplus(outputs[2]) + tf.cast(tf.exp(-7.), self.dtype)
-    else:
-      outputs[2] = tf.maximum(
-          tf.sigmoid(outputs[2]) * self._high, tf.cast(0.25, self.dtype))
+    # for logistic
+    # # Ensure scales are positive and do not collapse to near-zero
+    # if self._rescale_pixel_value:
+    #   outputs[2] = tf.nn.softplus(outputs[2]) + tf.cast(tf.exp(-7.), self.dtype)
+    # else:
+    #   outputs[2] = tf.maximum(
+    #       tf.sigmoid(outputs[2]) * self._high, tf.cast(0.25, self.dtype))
+
+    # for kumaraswamy
+    # outputs[2] = tf.maximum(
+    #   tf.sigmoid(outputs[2]) * self._high, tf.cast(0.001, self.dtype))
+    # outputs[1] = tf.maximum(
+    #   tf.sigmoid(outputs[1]) * self._high, tf.cast(0.001, self.dtype))
+    outputs[2] = tf.nn.softplus(outputs[2]) + tf.cast(tf.exp(-7.), self.dtype)
+    outputs[1] = tf.nn.softplus(outputs[1]) + tf.cast(tf.exp(-7.), self.dtype)
 
     inputs = (
         image_input

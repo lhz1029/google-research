@@ -230,6 +230,10 @@ def load_data_and_model_and_pred(exp,
   emds_ood = preds_ood['emds']
   np.save(f'{FLAGS.model_dir}/emds_in', emds_in)
   np.save(f'{FLAGS.model_dir}/emds_ood', emds_ood)
+  images_in = preds_in['images']
+  images_ood = preds_ood['images']
+  np.save(f'{FLAGS.model_dir}/images_in', images_in)
+  np.save(f'{FLAGS.model_dir}/images_ood', images_ood)
   if return_per_pixel:
     log_probs_per_pixel_in = preds_in['log_probs_per_pixel']
     log_probs_per_pixel_ood = preds_ood['log_probs_per_pixel']

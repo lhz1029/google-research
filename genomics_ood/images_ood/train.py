@@ -85,7 +85,7 @@ flags.DEFINE_integer('wnorm', 1, 'wasserstein norm')
 flags.DEFINE_boolean('pixel_hist', False, 'plot tb histograms')
 flags.DEFINE_boolean('binarize', False, 'binarize (only for fashion/mnist)')
 flags.DEFINE_integer('dist_high', 255, 'max boundary for logistic')
-flags.DEFINE_string('dist', 'logistic', 'logistic|categorical')
+flags.DEFINE_string('dist', 'logistic', 'logistic|categorical|kumaraswamy')
 FLAGS = flags.FLAGS
 
 
@@ -227,7 +227,8 @@ def main(unused_argv):
   else:
     log_prob_i = dist.log_prob(tr_in_im['image'], return_per_pixel=False, dist_family=FLAGS.dist)
     # log_prob_i = tf.Print(log_prob_i, [dist.locs, dist.scales], summarize=30, message="train locs and scales")
-    # log_prob_i = tf.Print(log_prob_i, [tf.shape(log_prob_i)], summarize=10, message="train log probs")
+    # log_prob_i = tf.Print(log_prob_i, [log_prob_i], summarize=30, message="train log probs")
+    # log_prob_i = tf.Print(log_prob_i, [tr_in_im['image']], summarize=30, message="train imgs")
     if FLAGS.deriv_constraint:
         img = tf.reshape(tr_in_im['image'], [tf.shape(tr_in_im['image'])[0], -1])
         # proportion of zeros is not differentiable
@@ -325,7 +326,6 @@ def main(unused_argv):
         loss_val_in_np, summary_val_in = sess.run([loss_val_in, merged_val_in])
         val_in_writer.add_summary(summary_val_in, step)
 
-        print(step, loss_tr_np, loss_val_in_np)
         print('step=%d, tr_in_loss=%.4f, val_in_loss=%.4f' %
               (step, loss_tr_np, loss_val_in_np))
         import numpy as np
