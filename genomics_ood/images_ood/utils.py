@@ -33,21 +33,29 @@ import cv2
 
 
 def load_tfdata_from_np(np_file, flip=None, binarize=False):
-  try:
-    with tf.compat.v1.gfile.Open(np_file, mode='rb') as f:
-      images = np.load(f)
-      labels = np.load(f)
-  except ValueError:
-    print('tf open failed')
-    images = np.load(np_file)
-    if flip == 'v':
-      images = np.array([np.flipud(img) for img in images])
-    elif flip == 'h':
-      images = np.array([np.fliplr(img) for img in images])
-    if binarize:
-      images[:] = np.where(images > 127.5, 1, 0)
-      assert len(np.unique(images.flatten())) == 2, f"Too many pixel values: {np.unique(images.flatten())}"
-    labels = images
+  # try:
+  #   with tf.compat.v1.gfile.Open(np_file, mode='rb') as f:
+  #     images = np.load(f)
+  #     labels = np.load(f)
+  # except ValueError:
+  #   print('tf open failed')
+  images = np.load(np_file)
+  if flip == 'v':
+    images = np.array([np.flipud(img) for img in images])
+  elif flip == 'h':
+    images = np.array([np.fliplr(img) for img in images])
+  if binarize:
+    print('binarizing')
+    print('before sum: ', images.sum())
+    # bin2
+    images[:] = np.where(images > 127.5, 255, 0)
+    # binarize flip
+    # images[:] = np.where(images > 127.5, 0, 255)
+    # binarize 0, 1; bin1
+    # images[:] = np.where(images > 127.5, 1, 0)
+    print('sum: ', images.sum())
+    assert len(np.unique(images.flatten())) == 2, f"Too many pixel values: {np.unique(images.flatten())}"
+  labels = images
   dataset = tf.compat.v1.data.Dataset.from_tensor_slices(
       (images, labels)).map(tensor_slices_preprocess)
   return dataset
@@ -350,7 +358,8 @@ def eval_on_data(data,
       log_prob_np, label_np, image_np, grad_norm_np, locs_np, scales_np, emd_np = sess.run(
         [log_prob, label, img, grad_norm, dist.locs, dist.scales, emd])
       grad_i_list.append(grad_norm_np)
-      log_prob_i_list.append(np.expand_dims(log_prob_np, axis=-1))
+      # log_prob_i_list.append(np.expand_dims(log_prob_np, axis=-1))
+      log_prob_i_list.append(log_prob_np)
       label_i_list += list(label_np.reshape(-1))
       image_i_list.append(image_np)
       locs_list.append(locs_np)
