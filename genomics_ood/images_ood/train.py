@@ -87,6 +87,7 @@ flags.DEFINE_boolean('grad_hist', False, 'plot gradient histograms')
 flags.DEFINE_boolean('binarize', False, 'binarize (only for fashion/mnist)')
 flags.DEFINE_integer('dist_high', 255, 'max boundary for logistic')
 flags.DEFINE_string('dist', 'logistic', 'logistic|categorical|kumaraswamy')
+flags.DEFINE_string('output', 'v0', 'version of output scaling')
 FLAGS = flags.FLAGS
 
 
@@ -137,6 +138,7 @@ def main(unused_argv):
       'n_channel': 1 if FLAGS.exp in ['fashion', 'mnist', 'single_pixel', 'ones'] else 3,
       'exp': FLAGS.exp,
       'rescale_pixel_value': FLAGS.rescale_pixel_value,
+      'output': FLAGS.output,
   }
 
   # Print and write parameter settings
@@ -190,6 +192,7 @@ def main(unused_argv):
       use_weight_norm=params['use_weight_norm'],
       rescale_pixel_value=params['rescale_pixel_value'],
       high=FLAGS.dist_high,
+      output=FLAGS.output,
   )
 
   # Define the training loss and optimizer
@@ -227,9 +230,9 @@ def main(unused_argv):
     loss_val_in = utils.emd(val_mins, val_maxes, val_in_im['image'], FLAGS.lambda_penalty, FLAGS.wnorm)
   else:
     log_prob_i = dist.log_prob(tr_in_im['image'], return_per_pixel=False, dist_family=FLAGS.dist)
-    log_prob_i = tf.Print(log_prob_i, [dist.locs, dist.scales], summarize=30, message="train locs and scales")
-    log_prob_i = tf.Print(log_prob_i, [log_prob_i], summarize=30, message="train log probs")
-    log_prob_i = tf.Print(log_prob_i, [tr_in_im['image']], summarize=30, message="train imgs")
+    # log_prob_i = tf.Print(log_prob_i, [dist.locs, dist.scales], summarize=30, message="train locs and scales")
+    # log_prob_i = tf.Print(log_prob_i, [log_prob_i], summarize=30, message="train log probs")
+    # log_prob_i = tf.Print(log_prob_i, [tr_in_im['image']], summarize=30, message="train imgs")
     if FLAGS.deriv_constraint:
         img = tf.reshape(tr_in_im['image'], [tf.shape(tr_in_im['image'])[0], -1])
         # proportion of zeros is not differentiable
@@ -256,9 +259,9 @@ def main(unused_argv):
     loss = -tf.reduce_mean(log_prob_i)
 
     log_prob_i_val_in = dist.log_prob(val_in_im['image'], dist_family=FLAGS.dist)
-    log_prob_i_val_in = tf.Print(log_prob_i_val_in, [dist.locs, dist.scales], summarize=30, message="val locs and scales")
-    log_prob_i_val_in = tf.Print(log_prob_i_val_in, [log_prob_i_val_in], summarize=30, message="val log probs")
-    log_prob_i_val_in = tf.Print(log_prob_i_val_in, [val_in_im['image']], summarize=30, message="val imgs")
+    # log_prob_i_val_in = tf.Print(log_prob_i_val_in, [dist.locs, dist.scales], summarize=30, message="val locs and scales")
+    # log_prob_i_val_in = tf.Print(log_prob_i_val_in, [log_prob_i_val_in], summarize=30, message="val log probs")
+    # log_prob_i_val_in = tf.Print(log_prob_i_val_in, [val_in_im['image']], summarize=30, message="val imgs")
     loss_val_in = -tf.reduce_mean(log_prob_i_val_in)
 
   global_step = tf.compat.v1.train.get_or_create_global_step()
@@ -275,7 +278,7 @@ def main(unused_argv):
   #         # g = tf.debugging.check_numerics(g, "{}".format(v.name))
   #         loss = tf.Print(loss, [tf.reduce_sum(tf.cast(tf.math.is_nan(g), tf.int32))], summarize=10, message="{} is nan".format(v.name))
   #         loss = tf.Print(loss, [tf.reduce_min(g), tf.reduce_max(g)], summarize=10, message="{} min and max".format(v.name))
-  grads_and_vars = [(tf.clip_by_value(grad, -1000., 1000.), var) for grad, var in grads_and_vars]
+  # grads_and_vars = [(tf.clip_by_value(grad, -1000., 1000.), var) for grad, var in grads_and_vars]
   tr_op = opt.apply_gradients(grads_and_vars)
 
   # tr_op = opt.minimize(loss, global_step=global_step)
@@ -290,15 +293,23 @@ def main(unused_argv):
       tf.compat.v1.summary.scalar('train/learning_rate', learning_rate)
   ]
   if FLAGS.pixel_hist:
-    summaries.append(tf.compat.v1.summary.histogram('locs', dist.locs))
-    summaries.append(tf.compat.v1.summary.histogram('scales', dist.scales))
+    locs = dist.locs  # BHWMC
+    scales = dist.scales
+    locs = tf.Print(locs, [tf.shape(locs), tf.shape(scales)], summarize=10, message='shape')
+    # mixture dim is first
+    locs = tf.transpose(locs, perm=[3, 0, 1, 2, 4])
+    scales = tf.transpose(scales, perm=[3, 0, 1, 2, 4])
+    for idx in range(FLAGS.num_logistic_mix):
+      summaries.append(tf.compat.v1.summary.histogram(f'locs_{idx}', locs[idx]))
+      summaries.append(tf.compat.v1.summary.histogram(f'scales_{idx}', scales[idx]))
     if FLAGS.exp in ['fashion', 'ones']:
       pixels = tf.expand_dims(tr_in_im['image'], axis=-1)
     elif FLAGS.exp == 'cifar':
       pixels = tr_in_im['image']
     else:
       pixels = tf.ones_like(dist.locs)
-    summaries.append(tf.compat.v1.summary.histogram('locs', dist.locs - pixels))
+    for idx in range(FLAGS.num_logistic_mix):
+      summaries.append(tf.compat.v1.summary.histogram(f'loc_{idx}_to_pixel', tf.expand_dims(locs[idx], axis=-1) - pixels))
   if FLAGS.grad_hist:
     for g, v in grads_and_vars:
       if g is not None:

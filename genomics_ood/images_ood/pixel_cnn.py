@@ -42,7 +42,7 @@ import functools
 
 import numpy as np
 import tensorflow.compat.v1 as tf
-from tensorflow_probability.python.bijectors import shift, scale
+from tensorflow_probability.python.bijectors import shift, scale, sigmoid
 from tensorflow_probability.python.distributions import categorical
 from tensorflow_probability.python.distributions import distribution
 from tensorflow_probability.python.distributions import independent
@@ -275,7 +275,8 @@ class PixelCNN(distribution.Distribution):
                low=0,
                rescale_pixel_value=True,
                dtype=tf.float32,
-               name='PixelCNN'):
+               name='PixelCNN',
+               output='v0'):
     """Construct Pixel CNN++ distribution.
 
     Args:
@@ -351,7 +352,8 @@ class PixelCNN(distribution.Distribution):
           high=high,
           low=low,
           rescale_pixel_value=rescale_pixel_value,
-          dtype=dtype)
+          dtype=dtype,
+          output=output)
 
       image_input_shape = tensorshape_util.concatenate([None], image_shape)
       if conditional_shape is None:
@@ -411,6 +413,12 @@ class PixelCNN(distribution.Distribution):
               bijector=shift.Shift(shift=tf.cast(-0.5, self.dtype))),
           low=self._low,
           high=self._high)
+    
+    if dist_family == 'logistic_transform':
+      logistic_dist = quantized_distribution.QuantizedDistribution(
+          distribution=transformed_distribution.TransformedDistribution(
+              distribution=logistic.Logistic(loc=locs, scale=scales),
+              bijector=sigmoid.Sigmoid(low=self._low - .5, high=self._high + .5)))
     
     elif dist_family == 'kumaraswamy':
       logistic_dist = quantized_distribution.QuantizedDistribution(
@@ -559,7 +567,7 @@ class PixelCNN(distribution.Distribution):
           coef_count += 1
       locs = tf.concat(loc_tensors, axis=-1)
 
-    if dist_family == 'logistic':
+    if dist_family in ['logistic', 'logistic_transform']:
       if self.high == 1:
         self.locs = locs
         self.scales = scales
@@ -958,7 +966,8 @@ class _PixelCNNNetwork(tf.keras.layers.Layer):
                high=255,
                low=0,
                rescale_pixel_value=True,
-               dtype=tf.float32):
+               dtype=tf.float32,
+               output='v0'):
     """Initialize the neural network for the Pixel CNN++ distribution.
 
     Args:
@@ -999,6 +1008,7 @@ class _PixelCNNNetwork(tf.keras.layers.Layer):
     self._high = high
     self._low = low
     self._rescale_pixel_value = rescale_pixel_value
+    self._output = output
 
     if use_weight_norm:
       def layer_wrapper(layer):
@@ -1262,11 +1272,12 @@ class _PixelCNNNetwork(tf.keras.layers.Layer):
 
     # for logistic
     # # Ensure scales are positive and do not collapse to near-zero
-    # if self._rescale_pixel_value:
-    #   outputs[2] = tf.nn.softplus(outputs[2]) + tf.cast(tf.exp(-7.), self.dtype)
-    # else:
-    #   outputs[2] = tf.maximum(
-    #       tf.sigmoid(outputs[2]) * self._high, tf.cast(0.25, self.dtype))
+    if self._output == 'v0':
+      if self._rescale_pixel_value:
+        outputs[2] = tf.nn.softplus(outputs[2]) + tf.cast(tf.exp(-7.), self.dtype)
+      else:
+        outputs[2] = tf.maximum(
+            tf.sigmoid(outputs[2]) * self._high, tf.cast(0.25, self.dtype))
 
 
 
@@ -1277,16 +1288,18 @@ class _PixelCNNNetwork(tf.keras.layers.Layer):
     # outputs[1] = tf.maximum(
     #   tf.sigmoid(outputs[1]) * self._high, tf.cast(0.25, self.dtype))
     # # v1
-    # outputs[2] = tf.maximum(
-    #   tf.sigmoid(outputs[2]) * self._high, tf.cast(0.01, self.dtype))
-    # outputs[1] = tf.maximum(
-    #   tf.sigmoid(outputs[1]) * self._high, tf.cast(0.01, self.dtype))
+    elif self._output == 'v1':
+      outputs[2] = tf.maximum(
+        tf.sigmoid(outputs[2]) * self._high, tf.cast(0.01, self.dtype))
+      outputs[1] = tf.maximum(
+        tf.sigmoid(outputs[1]) * self._high, tf.cast(0.01, self.dtype))
     # v2
     # outputs[2] = tf.maximum(tf.nn.softplus(outputs[2]) + tf.cast(tf.exp(-7.), self.dtype), self._high * 2)
     # outputs[1] = tf.maximum(tf.nn.softplus(outputs[1]) + tf.cast(tf.exp(-7.), self.dtype), self._high * 2)
-    # v3
-    outputs[2] = tf.maximum(outputs[2], tf.cast(0.01, self.dtype))
-    outputs[1] = tf.maximum(outputs[1], tf.cast(0.01, self.dtype))
+    # v3 remove_max
+    elif self._output == 'v3':
+      outputs[2] = tf.maximum(outputs[2], tf.cast(0.01, self.dtype))
+      outputs[1] = tf.maximum(outputs[1], tf.cast(0.01, self.dtype))
 
     inputs = (
         image_input
