@@ -83,6 +83,7 @@ flags.DEFINE_boolean('small_data', False, 'If true, train and validate on 5 data
 flags.DEFINE_boolean('wasserstein', False, 'If true, train and validate on 5 data points')
 flags.DEFINE_integer('wnorm', 1, 'wasserstein norm')
 flags.DEFINE_boolean('pixel_hist', False, 'plot tb histograms')
+flags.DEFINE_boolean('grad_hist', False, 'plot gradient histograms')
 flags.DEFINE_boolean('binarize', False, 'binarize (only for fashion/mnist)')
 flags.DEFINE_integer('dist_high', 255, 'max boundary for logistic')
 flags.DEFINE_string('dist', 'logistic', 'logistic|categorical|kumaraswamy')
@@ -226,9 +227,9 @@ def main(unused_argv):
     loss_val_in = utils.emd(val_mins, val_maxes, val_in_im['image'], FLAGS.lambda_penalty, FLAGS.wnorm)
   else:
     log_prob_i = dist.log_prob(tr_in_im['image'], return_per_pixel=False, dist_family=FLAGS.dist)
-    # log_prob_i = tf.Print(log_prob_i, [dist.locs, dist.scales], summarize=30, message="train locs and scales")
-    # log_prob_i = tf.Print(log_prob_i, [log_prob_i], summarize=30, message="train log probs")
-    # log_prob_i = tf.Print(log_prob_i, [tr_in_im['image']], summarize=30, message="train imgs")
+    log_prob_i = tf.Print(log_prob_i, [dist.locs, dist.scales], summarize=30, message="train locs and scales")
+    log_prob_i = tf.Print(log_prob_i, [log_prob_i], summarize=30, message="train log probs")
+    log_prob_i = tf.Print(log_prob_i, [tr_in_im['image']], summarize=30, message="train imgs")
     if FLAGS.deriv_constraint:
         img = tf.reshape(tr_in_im['image'], [tf.shape(tr_in_im['image'])[0], -1])
         # proportion of zeros is not differentiable
@@ -255,8 +256,9 @@ def main(unused_argv):
     loss = -tf.reduce_mean(log_prob_i)
 
     log_prob_i_val_in = dist.log_prob(val_in_im['image'], dist_family=FLAGS.dist)
-    # log_prob_i_val_in = tf.Print(log_prob_i_val_in, [dist.locs, dist.scales], summarize=30, message="val locs and scales")
-    # log_prob_i_val_in = tf.Print(log_prob_i_val_in, [log_prob_i_val_in], summarize=10, message="val log probs")
+    log_prob_i_val_in = tf.Print(log_prob_i_val_in, [dist.locs, dist.scales], summarize=30, message="val locs and scales")
+    log_prob_i_val_in = tf.Print(log_prob_i_val_in, [log_prob_i_val_in], summarize=30, message="val log probs")
+    log_prob_i_val_in = tf.Print(log_prob_i_val_in, [val_in_im['image']], summarize=30, message="val imgs")
     loss_val_in = -tf.reduce_mean(log_prob_i_val_in)
 
   global_step = tf.compat.v1.train.get_or_create_global_step()
@@ -266,7 +268,17 @@ def main(unused_argv):
       learning_rate=learning_rate,
       beta1=params['momentum'],
       beta2=params['momentum2'])
-  tr_op = opt.minimize(loss, global_step=global_step)
+  print('trainable', tf.trainable_variables())
+  grads_and_vars=opt.compute_gradients(loss)
+  # for g, v in grads_and_vars:
+  #     if g is not None:
+  #         # g = tf.debugging.check_numerics(g, "{}".format(v.name))
+  #         loss = tf.Print(loss, [tf.reduce_sum(tf.cast(tf.math.is_nan(g), tf.int32))], summarize=10, message="{} is nan".format(v.name))
+  #         loss = tf.Print(loss, [tf.reduce_min(g), tf.reduce_max(g)], summarize=10, message="{} min and max".format(v.name))
+  grads_and_vars = [(tf.clip_by_value(grad, -1000., 1000.), var) for grad, var in grads_and_vars]
+  tr_op = opt.apply_gradients(grads_and_vars)
+
+  # tr_op = opt.minimize(loss, global_step=global_step)
 
   init_op = tf.compat.v1.global_variables_initializer()
   sess.run(init_op)
@@ -287,6 +299,17 @@ def main(unused_argv):
     else:
       pixels = tf.ones_like(dist.locs)
     summaries.append(tf.compat.v1.summary.histogram('locs', dist.locs - pixels))
+  if FLAGS.grad_hist:
+    for g, v in grads_and_vars:
+      if g is not None:
+          g = tf.debugging.check_numerics(g, "{}".format(v.name))
+          g = tf.Print(g, [g, tf.reduce_sum(tf.cast(tf.math.is_nan(g), tf.int32))], summarize=10, message="{} is nan".format(v.name))
+    for g, v in grads_and_vars:
+      if g is not None:
+          grad_hist_summary = tf.summary.histogram("{}/grad_histogram".format(v.name.replace(':', '_')), g)
+          sparsity_summary = tf.summary.scalar("{}/grad/sparsity".format(v.name.replace(':', '_')), tf.nn.zero_fraction(g))
+          summaries.append(grad_hist_summary)
+          summaries.append(sparsity_summary)
   if FLAGS.deriv_constraint or FLAGS.corr_constraint:
     summaries.append(tf.compat.v1.summary.scalar('penalty', tf.reduce_mean(penalty)))
   merged_tr = tf.compat.v1.summary.merge(summaries)
@@ -313,7 +336,7 @@ def main(unused_argv):
     for step in range(prev_step, FLAGS.total_steps + 1, 1):
       # TODO add optimizer back in
       _, loss_tr_np, summary = sess.run([tr_op, loss, merged_tr])
-      # loss_tr_np, = sess.run([loss])
+      # loss_tr_np, summary = sess.run([loss, merged_tr])
       if step % params['eval_every'] == 0:
         ckpt_name = 'model_step%d.ckpt' % step
         ckpt_path = os.path.join(job_model_dir, ckpt_name)
@@ -326,8 +349,13 @@ def main(unused_argv):
         loss_val_in_np, summary_val_in = sess.run([loss_val_in, merged_val_in])
         val_in_writer.add_summary(summary_val_in, step)
 
+
+        # print(step, loss_tr_np, loss_val_in_np)
+        print('**************')
         print('step=%d, tr_in_loss=%.4f, val_in_loss=%.4f' %
               (step, loss_tr_np, loss_val_in_np))
+        
+        # import sys; sys.exit()
         import numpy as np
         if np.isnan(loss_tr_np) or np.isnan(loss_val_in_np):
 

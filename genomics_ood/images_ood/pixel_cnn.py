@@ -48,6 +48,7 @@ from tensorflow_probability.python.distributions import distribution
 from tensorflow_probability.python.distributions import independent
 from tensorflow_probability.python.distributions import logistic
 from tensorflow_probability.python.distributions import bernoulli
+from tensorflow_probability.python.distributions import beta
 from tensorflow_probability.python.distributions import uniform
 from tensorflow_probability.python.distributions import kumaraswamy
 from tensorflow_probability.python.distributions import mixture_same_family
@@ -57,6 +58,7 @@ from tensorflow_probability.python.internal import prefer_static
 from tensorflow_probability.python.internal import reparameterization
 from tensorflow_probability.python.internal import tensorshape_util
 from tensorflow_probability.python.layers import weight_norm
+from tensorflow_probability.python.bijectors import Chain
 
 tf.compat.v1.disable_v2_behavior()
 
@@ -413,14 +415,28 @@ class PixelCNN(distribution.Distribution):
     elif dist_family == 'kumaraswamy':
       logistic_dist = quantized_distribution.QuantizedDistribution(
           distribution=transformed_distribution.TransformedDistribution(
-              distribution=kumaraswamy.Kumaraswamy(concentration1=tf.maximum(locs, tf.zeros_like(locs) + 1e-18), concentration0=tf.maximum(scales, tf.zeros_like(scales) + 1e-18)),
-              bijector=scale.Scale(scale=tf.cast(256., self.dtype))(shift.Shift(shift=tf.cast(-0.5, self.dtype)))),
+              distribution=kumaraswamy.Kumaraswamy(concentration1=locs, concentration0=scales, validate_args=True),
+              # bijector=scale.Scale(scale=tf.cast(256., self.dtype))(shift.Shift(shift=tf.cast(-0.5, self.dtype)))),
+              bijector=Chain([shift.Shift(shift=tf.cast(-1.0, self.dtype)), scale.Scale(scale=tf.cast(256., self.dtype))], validate_args=True)),
+              # bijector=Chain([]), validate_args=True),
           low=self._low,
           high=self._high)
       # logistic_dist = transformed_distribution.TransformedDistribution(
       #         distribution=kumaraswamy.Kumaraswamy(concentration1=tf.maximum(locs, tf.zeros_like(locs) + 1e-18), concentration0=tf.maximum(scales, tf.zeros_like(scales) + 1e-18)),
       #         bijector=scale.Scale(scale=tf.cast(256., self.dtype))(shift.Shift(shift=tf.cast(-0.5, self.dtype))))
       # logistic_dist = kumaraswamy.Kumaraswamy(concentration1=tf.maximum(locs, tf.zeros_like(locs) + 1e-18), concentration0=tf.maximum(scales, tf.zeros_like(scales) + 1e-18))
+    
+    elif dist_family == 'beta':
+      # locs and scales are already > 0
+      # logistic_dist = quantized_distribution.QuantizedDistribution(
+      #     distribution=transformed_distribution.TransformedDistribution(
+      #         distribution=beta.Beta(concentration1=locs, concentration0=scales, validate_args=True),
+      #         # bijector=scale.Scale(scale=tf.cast(256., self.dtype))(shift.Shift(shift=tf.cast(-1.0, self.dtype)))),
+      #         bijector=Chain([shift.Shift(shift=tf.cast(-1.0, self.dtype)), scale.Scale(scale=tf.cast(256., self.dtype))], validate_args=True)),
+      #         # bijector=Chain([]), validate_args=True),
+      #     low=self._low,
+      #     high=self._high)
+      logistic_dist = beta.Beta(concentration1=locs, concentration0=scales, validate_args=True, allow_nan_stats=False)
 
     # doesn't return channels
     # dist = mixture_same_family.MixtureSameFamily(
@@ -563,32 +579,97 @@ class PixelCNN(distribution.Distribution):
       else:
         dist = self._make_mixture_dist(
             component_logits, locs, scales, return_per_pixel=return_per_pixel, dist_family=dist_family)
+    elif dist_family == 'beta':
+      self.locs = locs
+      self.scales = scales
+      locs = tf.squeeze(locs, [3])
+      scales = tf.squeeze(scales, [3])
+      lower = tf.math.divide(tf.cast(value, tf.float32), 256.)
+      upper = tf.math.divide(tf.cast(value + 1, tf.float32), 256.)
+      upper = tf.Print(upper, [lower, upper], summarize=100, message="lower and upper")
+      # beta_dist = beta.Beta(concentration1=locs, concentration0=scales)
+      # beta_dist = self._make_mixture_dist(
+      #       component_logits, locs, scales, return_per_pixel=return_per_pixel, dist_family=dist_family)
+      # cdf_upper = beta_dist.cdf(upper)
+      # cdf_lower = beta_dist.cdf(lower)
+      cdf_upper = tf.math.betainc(locs, scales, upper)
+      cdf_lower = tf.math.betainc(locs, scales, lower)
+
+      prob = cdf_upper - cdf_lower
+      log_probs = tf.where(tf.math.equal(prob, tf.zeros_like(prob)), tf.math.log(tf.ones_like(prob) * 1e-8), tf.math.log(cdf_upper - cdf_lower))
+      log_probs = tf.Print(log_probs, [
+        tf.reduce_sum(tf.cast(tf.math.is_nan(log_probs), tf.int32)), tf.reduce_sum(tf.cast(tf.math.is_inf(log_probs), tf.int32)),
+        tf.reduce_sum(tf.cast(tf.math.is_nan(cdf_upper), tf.int32)), tf.reduce_sum(tf.cast(tf.math.is_inf(log_probs), tf.int32)),
+        tf.reduce_sum(tf.cast(tf.math.is_nan(cdf_lower), tf.int32)), tf.reduce_sum(tf.cast(tf.math.is_inf(log_probs), tf.int32))],
+         message="log prob nans")
+      log_probs = tf.Print(log_probs, [log_probs, cdf_lower, cdf_upper], summarize=100, message="log_probs, cdfs")
+      log_probs = tf.Print(log_probs, [tf.reduce_min(log_probs), tf.reduce_max(log_probs)], summarize=100, message="log_probs min and max")
+      log_probs = tf.Print(log_probs, [tf.reduce_min(cdf_upper), tf.reduce_max(cdf_upper)], summarize=100, message="cdf_upper min and max")
+      log_probs = tf.Print(log_probs, [tf.reduce_min(cdf_lower), tf.reduce_max(cdf_lower)], summarize=100, message="cdf_lower min and max")
+      if return_per_pixel:
+        return tf.squeeze(log_probs, axis=-1)
+      else:
+        img_log_probs = tf.reshape(log_probs, image_batch_and_conditional_shape)
+        return img_log_probs
+      # if return_per_pixel:
+      #   return tf.squeeze(log_probs, axis=-1)
+      # else:
+      #   log_probs = tf.reduce_sum(log_probs, axis=[1, 2, 3])
+      #   img_log_probs = tf.reshape(log_probs, image_batch_and_conditional_shape)
+      #   return img_log_probs
+
+      # dist = self._make_mixture_dist(
+      #       component_logits, locs, scales, return_per_pixel=return_per_pixel, dist_family=dist_family)
+      # value = tf.maximum(tf.math.divide(value, 256), tf.zeros_like(value) + 1e-18)
     elif dist_family == 'kumaraswamy':
       # NOTE: check that pixelcnn only outputs positive numbers
       self.locs = locs
       self.scales = scales
       locs = tf.squeeze(locs, [3])
       scales = tf.squeeze(scales, [3])
+      locs = tf.Print(locs, [tf.reduce_min(locs), tf.reduce_max(locs)], summarize=10, message="locs min and max")
+      scales = tf.Print(scales, [tf.reduce_min(scales), tf.reduce_max(scales)], summarize=10, message="scales min and max")
       # locs  = tf.Print(locs, [locs, tf.reduce_sum(tf.cast(tf.math.is_nan(locs), tf.int32))], message="locs are nan before")
       # scales  = tf.Print(scales, [scales, tf.reduce_sum(tf.cast(tf.math.is_nan(scales), tf.int32))], message="scales are nan before")
       # value is [0, 255] -> value is [0, 1]
-      lower = tf.math.divide(value, 256.)
-      upper = tf.math.divide(value + 1, 256.)
+
+      # # prevent nans when pixels are 0
+      # value = value + 1e-18
+      # x can't be exactly zero, x^a can't be exactly one
+      lower = tf.math.divide(value + 1e-5, 256.)
+      upper = tf.math.divide(value + 1 - 1e-5, 256.)
+      # lower = tf.Print(lower, [tf.reduce_min(lower), tf.reduce_max(lower)], summarize=100, message="lower min and max")
+      # upper = tf.Print(upper, [tf.reduce_min(upper), tf.reduce_max(upper)], summarize=100, message="upper min and max")
       # value = tf.Print(value, [value, tf.math.pow(upper, locs), tf.math.pow((tf.ones_like(locs) - tf.math.pow(upper, locs)), scales)], summarize=10, message="value and segments")
       # subtract 2 CDFs 
-      cdf_upper = tf.where(
-        tf.math.equal(upper, tf.cast(tf.ones_like(value), tf.float32)),
-        tf.ones_like(locs),
-        tf.ones_like(locs) - tf.math.pow((tf.ones_like(locs) - tf.math.pow(upper, locs)), scales)
-      )
-      cdf_lower = tf.where(
-        tf.math.equal(lower, tf.zeros_like(value)),
-        tf.zeros_like(locs),
-        tf.ones_like(locs) - tf.math.pow((tf.ones_like(locs) - tf.math.pow(lower, locs)), scales)
-      )
-      prob = cdf_upper - cdf_lower
-      log_probs = tf.where(tf.math.equal(prob, tf.zeros_like(prob)), tf.math.log(tf.ones_like(prob) * 1e-18), tf.math.log(cdf_upper - cdf_lower))
+      # cdf_upper = tf.where(
+      #   tf.math.equal(upper, tf.cast(tf.ones_like(value), tf.float32)),
+      #   tf.ones_like(locs),
+      #   tf.ones_like(locs) - tf.math.pow((tf.ones_like(locs) - tf.math.pow(upper, locs)), scales)
+      # )
+      # cdf_lower = tf.where(
+      #   tf.math.equal(lower, tf.zeros_like(value)),
+      #   tf.zeros_like(locs),
+      #   tf.ones_like(locs) - tf.math.pow((tf.ones_like(locs) - tf.math.pow(lower, locs)), scales)
+      # )
+      cdf_upper = tf.ones_like(locs) - tf.math.pow((tf.ones_like(locs) - tf.math.pow(upper, locs)), scales)
+      cdf_lower = tf.ones_like(locs) - tf.math.pow((tf.ones_like(locs) - tf.math.pow(lower, locs)), scales)
+      # prob = cdf_upper - cdf_lower
+      # log_probs = tf.where(tf.math.equal(prob, tf.zeros_like(prob)), tf.math.log(tf.ones_like(prob) * 1e-18), tf.math.log(cdf_upper - cdf_lower))
+      log_probs = tf.math.log(cdf_upper - cdf_lower + 1e-18)
+      # log_probs = tf.Print(log_probs, [tf.reduce_min(log_probs), tf.reduce_max(log_probs)], summarize=10, message="log_probs min and max")
       # log_probs = tf.Print(log_probs, [log_probs, cdf_lower, cdf_upper], summarize=10, message="log_probs, cdfs")
+      # log_probs = tf.Print(log_probs, [
+      #   tf.reduce_sum(tf.cast(tf.math.is_nan(log_probs), tf.int32)), tf.reduce_sum(tf.cast(tf.math.is_inf(log_probs), tf.int32)),
+      #   tf.reduce_sum(tf.cast(tf.math.is_nan(cdf_upper), tf.int32)), tf.reduce_sum(tf.cast(tf.math.is_inf(cdf_upper), tf.int32)),
+      #   tf.reduce_sum(tf.cast(tf.math.is_nan(cdf_lower), tf.int32)), tf.reduce_sum(tf.cast(tf.math.is_inf(cdf_lower), tf.int32)),
+      #   tf.reduce_sum(tf.cast(tf.math.is_nan(cdf_upper - cdf_lower), tf.int32)), tf.reduce_sum(tf.cast(tf.math.is_inf(cdf_upper - cdf_lower), tf.int32))],
+      #    message="log prob nans")
+      # log_probs = tf.Print(log_probs, [log_probs, cdf_lower, cdf_upper], summarize=100, message="log_probs, cdfs")
+      # log_probs = tf.Print(log_probs, [tf.reduce_min(log_probs), tf.reduce_max(log_probs)], summarize=100, message="log_probs min and max")
+      # log_probs = tf.Print(log_probs, [tf.reduce_min(cdf_upper), tf.reduce_max(cdf_upper)], summarize=100, message="cdf_upper min and max")
+      # log_probs = tf.Print(log_probs, [tf.reduce_min(cdf_lower), tf.reduce_max(cdf_lower)], summarize=100, message="cdf_lower min and max")
+      # log_probs = tf.Print(log_probs, [tf.reduce_min(cdf_upper - cdf_lower), tf.reduce_max(cdf_upper - cdf_lower)], summarize=100, message="cdf diff min and max")
       if return_per_pixel:
         return tf.squeeze(log_probs, axis=-1)
       else:
@@ -597,6 +678,11 @@ class PixelCNN(distribution.Distribution):
         return img_log_probs
       # dist = self._make_mixture_dist(
       #     component_logits, locs, scales, return_per_pixel=return_per_pixel, dist_family=dist_family)
+      # value = tf.maximum(tf.math.divide(value, 256), tf.zeros_like(value) + 1e-18)
+      # value = tf.Print(value, [
+      #   tf.reduce_sum(tf.cast(tf.math.greater_equal(value, tf.zeros_like(value)), tf.int32)), 
+      #   tf.reduce_sum(tf.cast(tf.math.greater_equal(locs, tf.zeros_like(locs)), tf.int32)), 
+      #   tf.reduce_sum(tf.cast(tf.math.greater_equal(scales, tf.zeros_like(scales)), tf.int32))], summarize=10, message="nonneg")
     # for training
     elif dist_family == 'categorical':
       self.locs = locs
@@ -645,7 +731,8 @@ class PixelCNN(distribution.Distribution):
         dist = independent.Independent(dist, reinterpreted_batch_ndims=2)
     # value = tf.Print(value, [tf.shape(value)], 'value_shape', summarize=10)
     log_px = dist.log_prob(value)
-    # log_px = tf.Print(log_px, [log_px, dist.log_prob(tf.zeros_like(value))], summarize=30, message="per pixel lp")
+    log_px = tf.Print(log_px, [log_px], summarize=30, message="per pixel lp")
+    # dist.log_prob(tf.reshape(tf.cast(tf.zeros_like(value) + tf.range(28), tf.float32), (28, 28)))
     if return_per_pixel:
       return log_px
     else:
@@ -1181,13 +1268,25 @@ class _PixelCNNNetwork(tf.keras.layers.Layer):
     #   outputs[2] = tf.maximum(
     #       tf.sigmoid(outputs[2]) * self._high, tf.cast(0.25, self.dtype))
 
-    # for kumaraswamy
+
+
+    # for kumaraswamy, beta 
+    # v0
     # outputs[2] = tf.maximum(
-    #   tf.sigmoid(outputs[2]) * self._high, tf.cast(0.001, self.dtype))
+    #   tf.sigmoid(outputs[2]) * self._high, tf.cast(0.25, self.dtype))
     # outputs[1] = tf.maximum(
-    #   tf.sigmoid(outputs[1]) * self._high, tf.cast(0.001, self.dtype))
-    outputs[2] = tf.nn.softplus(outputs[2]) + tf.cast(tf.exp(-7.), self.dtype)
-    outputs[1] = tf.nn.softplus(outputs[1]) + tf.cast(tf.exp(-7.), self.dtype)
+    #   tf.sigmoid(outputs[1]) * self._high, tf.cast(0.25, self.dtype))
+    # # v1
+    # outputs[2] = tf.maximum(
+    #   tf.sigmoid(outputs[2]) * self._high, tf.cast(0.01, self.dtype))
+    # outputs[1] = tf.maximum(
+    #   tf.sigmoid(outputs[1]) * self._high, tf.cast(0.01, self.dtype))
+    # v2
+    # outputs[2] = tf.maximum(tf.nn.softplus(outputs[2]) + tf.cast(tf.exp(-7.), self.dtype), self._high * 2)
+    # outputs[1] = tf.maximum(tf.nn.softplus(outputs[1]) + tf.cast(tf.exp(-7.), self.dtype), self._high * 2)
+    # v3
+    outputs[2] = tf.maximum(outputs[2], tf.cast(0.01, self.dtype))
+    outputs[1] = tf.maximum(outputs[1], tf.cast(0.01, self.dtype))
 
     inputs = (
         image_input
