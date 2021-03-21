@@ -326,7 +326,8 @@ def eval_on_data(data,
   # log_prob is [b, h, w]
   # emd is [b, h, w, c]
   log_prob = dist.log_prob(data_im['image'], return_per_pixel=return_per_pixel, dist_family=dist_family)
-  if dist_family == 'logistic':
+  # not accurate for logistic_transform but we don't care
+  if dist_family in ['logistic', 'logistic_transform']:
     if wasserstein:
       emd = emd_logistic(dist.locs, dist.scales, data_im['image'], agg='conditional')
   elif dist_family == 'categorical':

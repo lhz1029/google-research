@@ -415,10 +415,14 @@ class PixelCNN(distribution.Distribution):
           high=self._high)
     
     if dist_family == 'logistic_transform':
-      logistic_dist = quantized_distribution.QuantizedDistribution(
-          distribution=transformed_distribution.TransformedDistribution(
+      # problems with log_cdf, quantization with the (0, 1) bound
+      # logistic_dist = quantized_distribution.QuantizedDistribution(
+      #     distribution=transformed_distribution.TransformedDistribution(
+      #         distribution=logistic.Logistic(loc=locs, scale=scales),
+      #         bijector=sigmoid.Sigmoid(low=self._low - 1.5, high=self._high)))
+      logistic_dist = transformed_distribution.TransformedDistribution(
               distribution=logistic.Logistic(loc=locs, scale=scales),
-              bijector=sigmoid.Sigmoid(low=self._low - .5, high=self._high + .5)))
+              bijector=sigmoid.Sigmoid(low=self._low, high=self._high))
     
     elif dist_family == 'kumaraswamy':
       logistic_dist = quantized_distribution.QuantizedDistribution(
@@ -567,7 +571,7 @@ class PixelCNN(distribution.Distribution):
           coef_count += 1
       locs = tf.concat(loc_tensors, axis=-1)
 
-    if dist_family in ['logistic', 'logistic_transform']:
+    if dist_family == 'logistic':
       if self.high == 1:
         self.locs = locs
         self.scales = scales
@@ -585,8 +589,88 @@ class PixelCNN(distribution.Distribution):
           img_log_probs = tf.reshape(log_probs, image_batch_and_conditional_shape)
           return img_log_probs
       else:
+        locs = tf.Print(locs, [tf.reduce_min(locs), tf.reduce_max(locs)], summarize=100, message="locs min and max")
+        scales = tf.Print(scales, [tf.reduce_min(scales), tf.reduce_max(scales)], summarize=100, message="scales min and max")
+        # locs  = tf.Print(locs, [locs, tf.reduce_sum(tf.cast(tf.math.is_nan(locs), tf.int32))], message="locs are nan before")
+        # scales  = tf.Print(scales, [scales, tf.reduce_sum(tf.cast(tf.math.is_nan(scales), tf.int32))], message="scales are nan before")
         dist = self._make_mixture_dist(
             component_logits, locs, scales, return_per_pixel=return_per_pixel, dist_family=dist_family)
+    elif dist_family == 'logistic_transform':
+      self.locs = locs
+      self.scales = scales
+      # # only for num_mixture_logistic=1
+      # locs = tf.squeeze(locs, [3])
+      # scales = tf.squeeze(scales, [3])
+
+      # mixture dim is first after batch
+      locs = tf.transpose(locs, perm=[0, 3, 1, 2, 4])
+      scales = tf.transpose(scales, perm=[0, 3, 1, 2, 4])
+      
+      # normalize
+      component_logits = tf.nn.softmax(component_logits, axis=-1)
+      # add dim for channels
+      component_logits = tf.expand_dims(component_logits, axis=-1)
+      # mixture dim is first after batch
+      component_logits = tf.transpose(component_logits, perm=[0, 3, 1, 2, 4])
+
+      logistic_dist = transformed_distribution.TransformedDistribution(
+        distribution=logistic.Logistic(loc=locs, scale=scales),
+        bijector=sigmoid.Sigmoid(low=self._low, high=self._high + 1))
+
+      def safe_cdf_lower(x):
+        # add mixture component after batch dim
+        x = tf.repeat(tf.expand_dims(x, axis=1), repeats=2, axis=1)
+        x_ok = tf.not_equal(x, self._low)
+        f = lambda x: logistic_dist.cdf(x)
+        safe_f = tf.zeros_like
+        safe_x = tf.where(x_ok, x, tf.ones_like(x))
+        return tf.where(x_ok, f(safe_x), safe_f(x))
+      
+      def safe_cdf_upper(x):
+        # add mixture component after batch dim
+        x = tf.repeat(tf.expand_dims(x, axis=1), repeats=2, axis=1)
+        x_ok = tf.not_equal(x, self._high + 1)
+        f = lambda x: logistic_dist.cdf(x)
+        safe_f = tf.ones_like
+        safe_x = tf.where(x_ok, x, tf.ones_like(x))
+        return tf.where(x_ok, f(safe_x), safe_f(x))
+      
+      cdf_lower = safe_cdf_lower(value)  # BMHWC
+      cdf_upper = safe_cdf_upper(value + 1)
+      prob = cdf_upper - cdf_lower
+      prob = tf.Print(prob, [tf.shape(cdf_lower), tf.shape(prob), tf.shape(component_logits)], summarize=10, message="param shapes")
+      prob = tf.Print(prob, [
+        tf.reduce_sum(tf.cast(tf.math.is_nan(prob), tf.int32)), tf.reduce_sum(tf.cast(tf.math.is_inf(prob), tf.int32))],
+         message="safe prob nans")
+      prob = tf.math.reduce_sum(prob * component_logits, axis=1)
+      prob = tf.Print(prob, [tf.shape(prob), tf.reduce_min(prob), tf.reduce_max(prob), prob], summarize=100, message="prob shape, probs")
+
+      def safe_log_prob(x):
+        x_ok = tf.not_equal(x, 0.)
+        f = lambda x: tf.math.log(x)
+        safe_f = lambda x: tf.math.log(tf.ones_like(x) * 1e-8)
+        safe_x = tf.where(x_ok, x, tf.ones_like(x))
+        return tf.where(x_ok, f(safe_x), safe_f(x))
+
+      log_probs = safe_log_prob(prob)
+      log_probs = tf.Print(log_probs, [
+        tf.reduce_sum(tf.cast(tf.math.is_nan(log_probs), tf.int32)), tf.reduce_sum(tf.cast(tf.math.is_inf(log_probs), tf.int32)),
+        tf.reduce_sum(tf.cast(tf.math.is_nan(cdf_upper), tf.int32)), tf.reduce_sum(tf.cast(tf.math.is_inf(cdf_upper), tf.int32)),
+        tf.reduce_sum(tf.cast(tf.math.is_nan(cdf_lower), tf.int32)), tf.reduce_sum(tf.cast(tf.math.is_inf(cdf_lower), tf.int32))],
+         message="safe log prob nans")
+      log_probs = tf.Print(log_probs, [log_probs, cdf_lower, cdf_upper], summarize=100, message="safe log_probs, cdfs")
+      log_probs = tf.Print(log_probs, [tf.reduce_min(log_probs), tf.reduce_max(log_probs)], summarize=100, message="safe log_probs min and max")
+      log_probs = tf.Print(log_probs, [tf.reduce_min(cdf_upper), tf.reduce_max(cdf_upper)], summarize=100, message="safe cdf_upper min and max")
+      log_probs = tf.Print(log_probs, [tf.reduce_min(cdf_lower), tf.reduce_max(cdf_lower)], summarize=100, message="safe cdf_lower min and max")
+
+      if return_per_pixel:
+        return tf.squeeze(log_probs, axis=-1)
+      else:
+        log_probs = tf.reduce_sum(log_probs, axis=[1, 2, 3])
+        img_log_probs = tf.reshape(log_probs, image_batch_and_conditional_shape)
+        log_probs = tf.Print(log_probs, [tf.shape(log_probs), tf.shape(cdf_lower), tf.shape(cdf_upper)], summarize=100, message="log_probs, cdfs")
+        return img_log_probs
+
     elif dist_family == 'beta':
       self.locs = locs
       self.scales = scales
@@ -617,6 +701,7 @@ class PixelCNN(distribution.Distribution):
       if return_per_pixel:
         return tf.squeeze(log_probs, axis=-1)
       else:
+        log_probs = tf.reduce_sum(log_probs, axis=[1, 2, 3])
         img_log_probs = tf.reshape(log_probs, image_batch_and_conditional_shape)
         return img_log_probs
       # if return_per_pixel:
@@ -737,9 +822,10 @@ class PixelCNN(distribution.Distribution):
       dist = uniform.Uniform(low=tf.minimum(self.locs, self.scales), high=tf.maximum(self.locs, self.scales))
       if not return_per_pixel:
         dist = independent.Independent(dist, reinterpreted_batch_ndims=2)
-    # value = tf.Print(value, [tf.shape(value)], 'value_shape', summarize=10)
+    value = tf.Print(value, [tf.shape(value), value], 'value_shape', summarize=100)
     log_px = dist.log_prob(value)
     log_px = tf.Print(log_px, [log_px], summarize=30, message="per pixel lp")
+    log_px = tf.Print(log_px, [tf.reduce_sum(tf.cast(tf.math.is_nan(log_px), tf.int32)), tf.reduce_sum(tf.cast(tf.math.is_inf(log_px), tf.int32))], summarize=30, message="nans or infs")
     # dist.log_prob(tf.reshape(tf.cast(tf.zeros_like(value) + tf.range(28), tf.float32), (28, 28)))
     if return_per_pixel:
       return log_px
