@@ -136,6 +136,7 @@ def create_model_and_restore_ckpt(ckpt_file):
       num_logistic_mix=params['num_logistic_mix'],
       use_weight_norm=params['use_weight_norm'],
       rescale_pixel_value=params['rescale_pixel_value'],
+      output=params.get('output', 'v0'),
   )
 
   saver = tf.compat.v1.train.Saver(max_to_keep=50000)
