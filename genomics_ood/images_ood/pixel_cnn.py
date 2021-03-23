@@ -50,6 +50,7 @@ from tensorflow_probability.python.distributions import logistic
 from tensorflow_probability.python.distributions import bernoulli
 from tensorflow_probability.python.distributions import beta
 from tensorflow_probability.python.distributions import uniform
+from tensorflow_probability.python.distributions import normal
 from tensorflow_probability.python.distributions import kumaraswamy
 from tensorflow_probability.python.distributions import mixture_same_family
 from tensorflow_probability.python.distributions import quantized_distribution
@@ -595,7 +596,7 @@ class PixelCNN(distribution.Distribution):
         # scales  = tf.Print(scales, [scales, tf.reduce_sum(tf.cast(tf.math.is_nan(scales), tf.int32))], message="scales are nan before")
         dist = self._make_mixture_dist(
             component_logits, locs, scales, return_per_pixel=return_per_pixel, dist_family=dist_family)
-    elif dist_family == 'logistic_transform':
+    elif dist_family in ['logistic_transform', 'normal_transform']:
       self.locs = locs
       self.scales = scales
       # # only for num_mixture_logistic=1
@@ -613,9 +614,14 @@ class PixelCNN(distribution.Distribution):
       # mixture dim is first after batch
       component_logits = tf.transpose(component_logits, perm=[0, 3, 1, 2, 4])
 
-      logistic_dist = transformed_distribution.TransformedDistribution(
-        distribution=logistic.Logistic(loc=locs, scale=scales),
-        bijector=sigmoid.Sigmoid(low=self._low, high=self._high + 1))
+      if dist_family == 'logistic_transform':
+        logistic_dist = transformed_distribution.TransformedDistribution(
+          distribution=logistic.Logistic(loc=locs, scale=scales),
+          bijector=sigmoid.Sigmoid(low=self._low, high=self._high + 1))
+      elif dist_family == 'normal_transform':
+        logistic_dist = transformed_distribution.TransformedDistribution(
+          distribution=normal.Normal(loc=locs, scale=scales),
+          bijector=sigmoid.Sigmoid(low=self._low, high=self._high + 1))
 
       def safe_cdf_lower(x):
         # add mixture component after batch dim
@@ -638,12 +644,12 @@ class PixelCNN(distribution.Distribution):
       cdf_lower = safe_cdf_lower(value)  # BMHWC
       cdf_upper = safe_cdf_upper(value + 1)
       prob = cdf_upper - cdf_lower
-      prob = tf.Print(prob, [tf.shape(cdf_lower), tf.shape(prob), tf.shape(component_logits)], summarize=10, message="param shapes")
-      prob = tf.Print(prob, [
-        tf.reduce_sum(tf.cast(tf.math.is_nan(prob), tf.int32)), tf.reduce_sum(tf.cast(tf.math.is_inf(prob), tf.int32))],
-         message="safe prob nans")
+      # prob = tf.Print(prob, [tf.shape(cdf_lower), tf.shape(prob), tf.shape(component_logits)], summarize=10, message="param shapes")
+      # prob = tf.Print(prob, [
+      #   tf.reduce_sum(tf.cast(tf.math.is_nan(prob), tf.int32)), tf.reduce_sum(tf.cast(tf.math.is_inf(prob), tf.int32))],
+      #    message="safe prob nans")
       prob = tf.math.reduce_sum(prob * component_logits, axis=1)
-      prob = tf.Print(prob, [tf.shape(prob), tf.reduce_min(prob), tf.reduce_max(prob), prob], summarize=100, message="prob shape, probs")
+      # prob = tf.Print(prob, [tf.shape(prob), tf.reduce_min(prob), tf.reduce_max(prob), prob], summarize=100, message="prob shape, probs")
 
       def safe_log_prob(x):
         x_ok = tf.not_equal(x, 0.)
@@ -653,15 +659,15 @@ class PixelCNN(distribution.Distribution):
         return tf.where(x_ok, f(safe_x), safe_f(x))
 
       log_probs = safe_log_prob(prob)
-      log_probs = tf.Print(log_probs, [
-        tf.reduce_sum(tf.cast(tf.math.is_nan(log_probs), tf.int32)), tf.reduce_sum(tf.cast(tf.math.is_inf(log_probs), tf.int32)),
-        tf.reduce_sum(tf.cast(tf.math.is_nan(cdf_upper), tf.int32)), tf.reduce_sum(tf.cast(tf.math.is_inf(cdf_upper), tf.int32)),
-        tf.reduce_sum(tf.cast(tf.math.is_nan(cdf_lower), tf.int32)), tf.reduce_sum(tf.cast(tf.math.is_inf(cdf_lower), tf.int32))],
-         message="safe log prob nans")
-      log_probs = tf.Print(log_probs, [log_probs, cdf_lower, cdf_upper], summarize=100, message="safe log_probs, cdfs")
-      log_probs = tf.Print(log_probs, [tf.reduce_min(log_probs), tf.reduce_max(log_probs)], summarize=100, message="safe log_probs min and max")
-      log_probs = tf.Print(log_probs, [tf.reduce_min(cdf_upper), tf.reduce_max(cdf_upper)], summarize=100, message="safe cdf_upper min and max")
-      log_probs = tf.Print(log_probs, [tf.reduce_min(cdf_lower), tf.reduce_max(cdf_lower)], summarize=100, message="safe cdf_lower min and max")
+      # log_probs = tf.Print(log_probs, [
+      #   tf.reduce_sum(tf.cast(tf.math.is_nan(log_probs), tf.int32)), tf.reduce_sum(tf.cast(tf.math.is_inf(log_probs), tf.int32)),
+      #   tf.reduce_sum(tf.cast(tf.math.is_nan(cdf_upper), tf.int32)), tf.reduce_sum(tf.cast(tf.math.is_inf(cdf_upper), tf.int32)),
+      #   tf.reduce_sum(tf.cast(tf.math.is_nan(cdf_lower), tf.int32)), tf.reduce_sum(tf.cast(tf.math.is_inf(cdf_lower), tf.int32))],
+      #    message="safe log prob nans")
+      # log_probs = tf.Print(log_probs, [log_probs, cdf_lower, cdf_upper], summarize=100, message="safe log_probs, cdfs")
+      # log_probs = tf.Print(log_probs, [tf.reduce_min(log_probs), tf.reduce_max(log_probs)], summarize=100, message="safe log_probs min and max")
+      # log_probs = tf.Print(log_probs, [tf.reduce_min(cdf_upper), tf.reduce_max(cdf_upper)], summarize=100, message="safe cdf_upper min and max")
+      # log_probs = tf.Print(log_probs, [tf.reduce_min(cdf_lower), tf.reduce_max(cdf_lower)], summarize=100, message="safe cdf_lower min and max")
 
       if return_per_pixel:
         return tf.squeeze(log_probs, axis=-1)
@@ -1386,6 +1392,19 @@ class _PixelCNNNetwork(tf.keras.layers.Layer):
     elif self._output == 'v3':
       outputs[2] = tf.maximum(outputs[2], tf.cast(0.01, self.dtype))
       outputs[1] = tf.maximum(outputs[1], tf.cast(0.01, self.dtype))
+    elif self._output == 'v4':
+      outputs[2] = tf.nn.softplus(outputs[2])
+      outputs[1] = tf.nn.softplus(outputs[1])
+    elif self._output == 'v5':
+      outputs[2] = tf.maximum(
+            tf.sigmoid(outputs[2]) * self._high, tf.cast(0.00001, self.dtype))
+      outputs[1] = tf.maximum(
+            tf.sigmoid(outputs[1]) * self._high, tf.cast(0.00001, self.dtype))
+    elif self._output == 'v6':
+      outputs[2] = tf.maximum(
+            tf.sigmoid(outputs[2]) * self._high, tf.cast(0.00001, self.dtype))
+    elif self._output == 'v7':
+      outputs[2] = tf.nn.softplus(outputs[2]) + tf.cast(tf.exp(-7.), self.dtype)
 
     inputs = (
         image_input

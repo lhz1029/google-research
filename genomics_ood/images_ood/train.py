@@ -273,11 +273,11 @@ def main(unused_argv):
       beta2=params['momentum2'])
   print('trainable', tf.trainable_variables())
   grads_and_vars=opt.compute_gradients(loss)
-  # for g, v in grads_and_vars:
-  #     if g is not None:
-  #         # g = tf.debugging.check_numerics(g, "{}".format(v.name))
-  #         loss = tf.Print(loss, [tf.reduce_sum(tf.cast(tf.math.is_nan(g), tf.int32))], summarize=10, message="{} is nan".format(v.name))
-  #         loss = tf.Print(loss, [tf.reduce_min(g), tf.reduce_max(g)], summarize=10, message="{} min and max".format(v.name))
+  for g, v in grads_and_vars:
+      if g is not None:
+          # g = tf.debugging.check_numerics(g, "{}".format(v.name))
+          loss = tf.Print(loss, [tf.reduce_sum(tf.cast(tf.math.is_nan(g), tf.int32))], summarize=10, message="{} is nan".format(v.name))
+          loss = tf.Print(loss, [tf.reduce_min(g), tf.reduce_max(g)], summarize=10, message="{} min and max".format(v.name))
   # grads_and_vars = [(tf.clip_by_value(grad, -1000., 1000.), var) for grad, var in grads_and_vars]
   tr_op = opt.apply_gradients(grads_and_vars)
 
@@ -365,14 +365,15 @@ def main(unused_argv):
         print('**************')
         print('step=%d, tr_in_loss=%.4f, val_in_loss=%.4f' %
               (step, loss_tr_np, loss_val_in_np))
-        
-        # import sys; sys.exit()
+
         import numpy as np
         if np.isnan(loss_tr_np) or np.isnan(loss_val_in_np):
-
           import sys; sys.exit()
         tr_writer.flush()
         val_in_writer.flush()
+
+      # if step == 1:  
+      #   import sys; sys.exit()
 
   tr_writer.close()
   val_in_writer.close()
