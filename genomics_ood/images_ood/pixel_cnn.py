@@ -355,6 +355,7 @@ class PixelCNN(distribution.Distribution):
           rescale_pixel_value=rescale_pixel_value,
           dtype=dtype,
           output=output)
+      self._output = output
 
       image_input_shape = tensorshape_util.concatenate([None], image_shape)
       if conditional_shape is None:
@@ -895,14 +896,14 @@ class PixelCNN(distribution.Distribution):
     # scales0 = tf.Print(scales0, [tf.reduce_min(scales0), tf.reduce_max(scales0), tf.shape(scales0)], summarize=10, message="scales")
     # samples_0 = self._sample_channels(mixtures0, locs0, scales0, seed=seed)
 
-    mixtures0, locs0, scales0, coeffs0 = params_0
-    locs0 = tf.Print(locs0, [tf.reduce_min(locs0), tf.reduce_max(locs0), tf.shape(locs0)], summarize=10, message="locs")
-    scales0 = tf.Print(scales0, [tf.reduce_min(scales0), tf.reduce_max(scales0), tf.shape(scales0)], summarize=10, message="scales")
-    coeffs0 = tf.Print(coeffs0, [tf.reduce_min(coeffs0), tf.reduce_max(coeffs0), tf.shape(coeffs0)], summarize=10, message="coeffs")
-    mixtures0 = tf.Print(mixtures0, [tf.reduce_min(mixtures0), tf.reduce_max(mixtures0), tf.shape(mixtures0)], summarize=10, message="mixtures")
-    samples_0 = self._sample_channels(mixtures0, locs0, scales0, coeffs0, seed=seed)
+    # mixtures0, locs0, scales0, coeffs0 = params_0
+    # locs0 = tf.Print(locs0, [tf.reduce_min(locs0), tf.reduce_max(locs0), tf.shape(locs0)], summarize=10, message="locs")
+    # scales0 = tf.Print(scales0, [tf.reduce_min(scales0), tf.reduce_max(scales0), tf.shape(scales0)], summarize=10, message="scales")
+    # coeffs0 = tf.Print(coeffs0, [tf.reduce_min(coeffs0), tf.reduce_max(coeffs0), tf.shape(coeffs0)], summarize=10, message="coeffs")
+    # mixtures0 = tf.Print(mixtures0, [tf.reduce_min(mixtures0), tf.reduce_max(mixtures0), tf.shape(mixtures0)], summarize=10, message="mixtures")
+    # samples_0 = self._sample_channels(mixtures0, locs0, scales0, coeffs0, seed=seed)
 
-    # samples_0 = self._sample_channels(*params_0, seed=seed)
+    samples_0 = self._sample_channels(*params_0, seed=seed)
     samples_0 = tf.Print(samples_0, [tf.reduce_min(samples_0), tf.reduce_max(samples_0), tf.shape(samples_0)], summarize=10, message="samples0")
     image_height, image_width, _ = tensorshape_util.as_list(self.event_shape)
     def loop_body(index, samples):
@@ -1003,12 +1004,18 @@ class PixelCNN(distribution.Distribution):
         loc += c * coef_tensors[coef_count]
         coef_count += 1
 
-      logistic_samp = logistic.Logistic(
-          loc=loc, scale=scale_tensors[i]).sample(seed=seed)
-      if self._rescale_pixel_value:
-        logistic_samp = tf.clip_by_value(logistic_samp, -1., 1.)
-      else:
-        logistic_samp = tf.clip_by_value(logistic_samp, 0., 255.)
+      if self._output == 'v0':
+        logistic_samp = logistic.Logistic(
+            loc=loc, scale=scale_tensors[i]).sample(seed=seed)
+        if self._rescale_pixel_value:
+          logistic_samp = tf.clip_by_value(logistic_samp, -1., 1.)
+        else:
+          logistic_samp = tf.clip_by_value(logistic_samp, 0., 255.)
+      elif self._output == 'v6':
+        logistic_samp = transformed_distribution.TransformedDistribution(
+          distribution=logistic.Logistic(loc=tf.squeeze(locs, axis=-1), scale=scale_tensors[i]),
+          bijector=sigmoid.Sigmoid(low=self._low, high=self._high)).sample(seed=seed)
+      
       channel_samples.append(logistic_samp)
 
     return tf.concat(channel_samples, axis=-1)
