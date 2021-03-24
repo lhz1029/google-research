@@ -176,11 +176,11 @@ def load_data_and_model_and_pred(exp,
 
   dist, params, sess = create_model_and_restore_ckpt(ckpt_file)
 
-  # samples = dist.sample(500)
-  # samples_np, = sess.run([samples])
-  # print(samples_np.shape)
-  # np.save(f'{FLAGS.model_dir}/samples', samples_np)
-  # import sys; sys.exit()
+  samples = dist.sample(500, dist_family=FLAGS.dist_family)
+  samples_np, = sess.run([samples])
+  print(samples_np.shape)
+  np.save(f'{FLAGS.model_dir}/samples', samples_np)
+  import sys; sys.exit()
 
   # Evaluations
   preds_in = utils.eval_on_data(

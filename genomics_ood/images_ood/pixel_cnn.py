@@ -355,7 +355,6 @@ class PixelCNN(distribution.Distribution):
           rescale_pixel_value=rescale_pixel_value,
           dtype=dtype,
           output=output)
-      self._output = output
 
       image_input_shape = tensorshape_util.concatenate([None], image_shape)
       if conditional_shape is None:
@@ -839,7 +838,7 @@ class PixelCNN(distribution.Distribution):
     else:
       return tf.reshape(log_px, image_batch_and_conditional_shape)
 
-  def _sample_n(self, n, seed=None, conditional_input=None, training=False):
+  def _sample_n(self, n, seed=None, conditional_input=None, training=False, dist_family='logistic'):
     """Samples from the distribution, with optional conditional input.
 
     Args:
@@ -903,7 +902,7 @@ class PixelCNN(distribution.Distribution):
     # mixtures0 = tf.Print(mixtures0, [tf.reduce_min(mixtures0), tf.reduce_max(mixtures0), tf.shape(mixtures0)], summarize=10, message="mixtures")
     # samples_0 = self._sample_channels(mixtures0, locs0, scales0, coeffs0, seed=seed)
 
-    samples_0 = self._sample_channels(*params_0, seed=seed)
+    samples_0 = self._sample_channels(*params_0, seed=seed, dist_family=dist_family)
     samples_0 = tf.Print(samples_0, [tf.reduce_min(samples_0), tf.reduce_max(samples_0), tf.shape(samples_0)], summarize=10, message="samples0")
     image_height, image_width, _ = tensorshape_util.as_list(self.event_shape)
     def loop_body(index, samples):
@@ -922,7 +921,7 @@ class PixelCNN(distribution.Distribution):
       """
       inputs = samples if conditional_input is None else [samples, h]
       params = self.network(inputs, training=training)
-      samples_new = self._sample_channels(*params, seed=seed)
+      samples_new = self._sample_channels(*params, seed=seed, dist_family=dist_family)
 
       # Update the current pixel
       samples = tf.transpose(samples, [1, 2, 3, 0])
@@ -954,7 +953,7 @@ class PixelCNN(distribution.Distribution):
       return tf.round(samples)
 
   def _sample_channels(
-      self, component_logits, locs, scales, coeffs=None, seed=None):
+      self, component_logits, locs, scales, coeffs=None, seed=None, dist_family='logistic'):
     """Sample a single pixel-iteration and apply channel conditioning.
 
     Args:
@@ -1004,17 +1003,18 @@ class PixelCNN(distribution.Distribution):
         loc += c * coef_tensors[coef_count]
         coef_count += 1
 
-      if self._output == 'v0':
+      if dist_family == 'logistic':
         logistic_samp = logistic.Logistic(
             loc=loc, scale=scale_tensors[i]).sample(seed=seed)
         if self._rescale_pixel_value:
           logistic_samp = tf.clip_by_value(logistic_samp, -1., 1.)
         else:
           logistic_samp = tf.clip_by_value(logistic_samp, 0., 255.)
-      elif self._output == 'v6':
+      elif dist_family == 'logistic_transform':
         logistic_samp = transformed_distribution.TransformedDistribution(
           distribution=logistic.Logistic(loc=tf.squeeze(locs, axis=-1), scale=scale_tensors[i]),
           bijector=sigmoid.Sigmoid(low=self._low, high=self._high)).sample(seed=seed)
+        logistic_samp = tf.Print(logistic_samp, [logistic_samp], message='in logistic transform')
       
       channel_samples.append(logistic_samp)
 
