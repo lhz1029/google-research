@@ -97,7 +97,7 @@ def load_fmnist_datasets(data_dir, out_data='mnist', binarize=False):
     test_ood = load_tfdata_from_np(
       os.path.join(data_dir, 'fashion_mnist_test.npy'), flip='v', binarize=binarize)
   elif out_data == 'unif':
-    images = np.random.uniform(size=(10000, 28, 28, 3))
+    images = np.stack([np.ones((28, 28, 1)) * i for i in range(256)], axis=0)
     labels = images
     test_ood = tf.compat.v1.data.Dataset.from_tensor_slices(
       (images, labels)).map(tensor_slices_preprocess)
@@ -266,8 +266,6 @@ def image_preprocess_grey(x):  # used for generate CIFAR-grey
 
 
 def compute_auc(neg, pos, pos_label=1):
-  np.save('neg.npy', neg)
-  np.save('pos.npy', pos)
   ys = np.concatenate((np.zeros(len(neg)), np.ones(len(pos))), axis=0)
   neg = np.nan_to_num(neg)
   pos = np.nan_to_num(pos)
