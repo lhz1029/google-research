@@ -306,6 +306,16 @@ def load_hparams(params_yaml_file):
   return params
 
 
+def get_count_dict():
+  fashion = np.load('../data/fashion_mnist_train.npy')
+  fashion = fashion.reshape((fashion.shape[0], -1))
+  count_blacks = (fashion == 0).sum(axis=1)
+  from collections import Counter
+  count_dict = Counter(count_blacks)
+  prob_dict = {k: v/sum(count_dict.values()) for k, v in count_dict.items()}
+  return prob_dict
+
+
 def eval_on_data(data,
                  preprocess_fn,
                  params,
@@ -313,7 +323,8 @@ def eval_on_data(data,
                  sess,
                  return_per_pixel=False,
                  dist_family='logistic',
-                 wasserstein=False):
+                 wasserstein=False,
+                 condition_count=False):
   """predict for data and save log_prob to npy."""
 
   data_ds = data.map(preprocess_fn).batch(
@@ -323,7 +334,12 @@ def eval_on_data(data,
   # NOTE: return_per_pixel collapses channels, e.g. for cifar
   # log_prob is [b, h, w]
   # emd is [b, h, w, c]
-  log_prob = dist.log_prob(data_im['image'], return_per_pixel=return_per_pixel, dist_family=dist_family)
+  if condition_count:
+    num_zeros = tf.reduce_sum(tf.cast(tf.math.equal(data_im['image'], tf.zeros_like(data_im['image'])), tf.int32), axis=[1, 2, 3])
+    num_zeros = tf.Print(num_zeros, [tf.shape(num_zeros), tf.shape(data_im['image'])], summarize=10, message="num zeros")
+    log_prob = dist.log_prob(data_im['image'], return_per_pixel=return_per_pixel, dist_family=dist_family, conditional_input=num_zeros)
+  else:
+    log_prob = dist.log_prob(data_im['image'], return_per_pixel=return_per_pixel, dist_family=dist_family)
   # not accurate for logistic_transform but we don't care
   if dist_family == 'logistic':
     if wasserstein:
@@ -349,13 +365,14 @@ def eval_on_data(data,
   locs_list = []
   scales_list = []
   emd_i_list = []
+  count_i_list = []
 
   # eval on dataset
   while True:
     try:
       label, img = data_im['label'], data_im['image']
-      log_prob_np, label_np, image_np, grad_norm_np, locs_np, scales_np, emd_np = sess.run(
-        [log_prob, label, img, grad_norm, dist.locs, dist.scales, emd])
+      log_prob_np, label_np, image_np, grad_norm_np, locs_np, scales_np, emd_np, count_np = sess.run(
+        [log_prob, label, img, grad_norm, dist.locs, dist.scales, emd, num_zeros])
       grad_i_list.append(grad_norm_np)
       # log_prob_i_list.append(np.expand_dims(log_prob_np, axis=-1))
       log_prob_i_list.append(log_prob_np)
@@ -364,6 +381,8 @@ def eval_on_data(data,
       locs_list.append(locs_np)
       scales_list.append(scales_np)
       emd_i_list.append(np.expand_dims(emd_np, axis=-1))
+      print(count_np.shape)
+      count_i_list.append(count_np)
 
     except tf.errors.OutOfRangeError:
       print('break')
@@ -373,6 +392,12 @@ def eval_on_data(data,
   log_prob_i_t_np = np.vstack(log_prob_i_list)
   log_prob_i_np = np.sum(
       log_prob_i_t_np.reshape(log_prob_i_t_np.shape[0], -1), axis=1)
+  if condition_count:
+    counts = np.concatenate(count_i_list)
+    count_to_prob_dict = get_count_dict()
+    log_p_count = np.log(np.array([count_to_prob_dict.get(count, 1e-500) for count in counts]))
+    print(log_p_count.shape)
+    log_prob_i_np = log_prob_i_np + log_p_count
   emd_i_t_np = np.vstack(emd_i_list)
   emd_i_np = np.sum(
       emd_i_t_np.reshape(emd_i_t_np.shape[0], -1), axis=1)
@@ -389,6 +414,8 @@ def eval_on_data(data,
   if return_per_pixel:
     out['log_probs_per_pixel'] = np.squeeze(log_prob_i_t_np)
     out['emds_per_pixel'] = np.squeeze(emd_i_t_np)
+  if condition_count:
+    out['log_p_count'] = log_p_count
   return out
 
 def shape_list(x):

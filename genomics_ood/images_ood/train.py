@@ -88,6 +88,7 @@ flags.DEFINE_boolean('binarize', False, 'binarize (only for fashion/mnist)')
 flags.DEFINE_integer('dist_high', 255, 'max boundary for logistic')
 flags.DEFINE_string('dist', 'logistic', 'logistic|categorical|kumaraswamy')
 flags.DEFINE_string('output', 'v0', 'version of output scaling')
+flags.DEFINE_boolean('condition_count', False, 'plot gradient histograms')
 FLAGS = flags.FLAGS
 
 
@@ -139,6 +140,7 @@ def main(unused_argv):
       'exp': FLAGS.exp,
       'rescale_pixel_value': FLAGS.rescale_pixel_value,
       'output': FLAGS.output,
+      'condition_count': FLAGS.condition_count
   }
 
   # Print and write parameter settings
@@ -193,6 +195,7 @@ def main(unused_argv):
       rescale_pixel_value=params['rescale_pixel_value'],
       high=FLAGS.dist_high,
       output=FLAGS.output,
+      conditional_shape=() if FLAGS.condition_count else None
   )
 
   # Define the training loss and optimizer
@@ -229,7 +232,12 @@ def main(unused_argv):
     val_mins = tf.Print(val_mins, [tf.reduce_sum(tf.cast(tf.math.equal(val_mins, val_maxes), dtype=tf.int32))], "min equals max", summarize=10)
     loss_val_in = utils.emd(val_mins, val_maxes, val_in_im['image'], FLAGS.lambda_penalty, FLAGS.wnorm)
   else:
-    log_prob_i = dist.log_prob(tr_in_im['image'], return_per_pixel=False, dist_family=FLAGS.dist)
+    if FLAGS.condition_count:
+      num_zeros = tf.reduce_sum(tf.cast(tf.math.equal(tr_in_im['image'], tf.zeros_like(tr_in_im['image'])), tf.float32), axis=[1, 2, 3]) / 784.
+      num_zeros = tf.Print(num_zeros, [tf.shape(num_zeros), tf.shape(tr_in_im['image'])], summarize=10, message="num zeros")
+      log_prob_i = dist.log_prob(tr_in_im['image'], return_per_pixel=False, dist_family=FLAGS.dist, conditional_input=num_zeros)
+    else:
+      log_prob_i = dist.log_prob(tr_in_im['image'], return_per_pixel=False, dist_family=FLAGS.dist)
     # log_prob_i = tf.Print(log_prob_i, [dist.locs, dist.scales], summarize=30, message="train locs and scales")
     # log_prob_i = tf.Print(log_prob_i, [log_prob_i], summarize=30, message="train log probs")
     # log_prob_i = tf.Print(log_prob_i, [tr_in_im['image']], summarize=30, message="train imgs")
@@ -258,7 +266,12 @@ def main(unused_argv):
         log_prob_i = log_prob_i - penalty
     loss = -tf.reduce_mean(log_prob_i)
 
-    log_prob_i_val_in = dist.log_prob(val_in_im['image'], dist_family=FLAGS.dist)
+    if FLAGS.condition_count:
+      num_zeros = tf.reduce_sum(tf.cast(tf.math.equal(val_in_im['image'], tf.zeros_like(val_in_im['image'])), tf.float32), axis=[1, 2, 3])  / 784.
+      num_zeros = tf.Print(num_zeros, [tf.shape(num_zeros), tf.shape(val_in_im['image'])], summarize=10, message="num zeros")
+      log_prob_i_val_in = dist.log_prob(val_in_im['image'], return_per_pixel=False, dist_family=FLAGS.dist, conditional_input=num_zeros)
+    else:
+      log_prob_i_val_in = dist.log_prob(val_in_im['image'], dist_family=FLAGS.dist)
     # log_prob_i_val_in = tf.Print(log_prob_i_val_in, [dist.locs, dist.scales], summarize=30, message="val locs and scales")
     # log_prob_i_val_in = tf.Print(log_prob_i_val_in, [log_prob_i_val_in], summarize=30, message="val log probs")
     # log_prob_i_val_in = tf.Print(log_prob_i_val_in, [val_in_im['image']], summarize=30, message="val imgs")

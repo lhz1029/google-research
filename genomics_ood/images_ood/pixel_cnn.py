@@ -512,6 +512,7 @@ class PixelCNN(distribution.Distribution):
 
       image_batch_and_conditional_shape = prefer_static.broadcast_shape(
           image_batch_shape, conditional_batch_shape)
+      conditional_input = tf.Print(conditional_input, [tf.shape(conditional_input), image_batch_and_conditional_shape], summarize=10, message="conditional")
       conditional_input = tf.broadcast_to(
           conditional_input,
           prefer_static.concat(

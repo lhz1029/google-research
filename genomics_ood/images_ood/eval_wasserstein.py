@@ -137,6 +137,7 @@ def create_model_and_restore_ckpt(ckpt_file):
       use_weight_norm=params['use_weight_norm'],
       rescale_pixel_value=params['rescale_pixel_value'],
       output=params.get('output', 'v0'),
+      conditional_shape=() if params.get('condition_count', False) else None,
   )
 
   saver = tf.compat.v1.train.Saver(max_to_keep=50000)
@@ -175,12 +176,16 @@ def load_data_and_model_and_pred(exp,
     return None, None, None, None
 
   dist, params, sess = create_model_and_restore_ckpt(ckpt_file)
+  condition_count = params.get('condition_count', False)
 
-  samples = dist.sample(500, dist_family=FLAGS.dist_family)
-  samples_np, = sess.run([samples])
-  print(samples_np.shape)
-  np.save(f'{FLAGS.model_dir}/samples', samples_np)
-  import sys; sys.exit()
+  # if condition_count:
+  #   samples = dist.sample((1, 672), dist_family=FLAGS.dist_family, conditional_input=list(range(59, 731)))
+  # else:
+  #   samples = dist.sample(500, dist_family=FLAGS.dist_family)
+  # samples_np, = sess.run([samples])
+  # print(samples_np.shape)
+  # np.save(f'{FLAGS.model_dir}/samples', samples_np)
+  # import sys; sys.exit()
 
   # Evaluations
   preds_in = utils.eval_on_data(
@@ -191,7 +196,8 @@ def load_data_and_model_and_pred(exp,
       sess,
       return_per_pixel=return_per_pixel,
       dist_family=FLAGS.dist_family,
-      wasserstein=True)
+      wasserstein=True,
+      condition_count=condition_count)
   preds_ood = utils.eval_on_data(
       datasets['%s_ood' % eval_mode_ood],
       utils.image_preprocess,
@@ -200,7 +206,8 @@ def load_data_and_model_and_pred(exp,
       sess,
       return_per_pixel=return_per_pixel,
       dist_family=FLAGS.dist_family,
-      wasserstein=True)
+      wasserstein=True,
+      condition_count=condition_count)
   grad_in = preds_in['grads']
   grad_ood = preds_ood['grads']
   grad_in = np.array(grad_in)
