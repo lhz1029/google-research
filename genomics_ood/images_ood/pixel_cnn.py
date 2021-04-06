@@ -598,7 +598,7 @@ class PixelCNN(distribution.Distribution):
         dist = self._make_mixture_dist(
             component_logits, locs, scales, return_per_pixel=return_per_pixel, dist_family=dist_family)
     elif dist_family in ['logistic_transform', 'normal_transform']:
-      self.locs = locs
+      self.locs = locs   # BHWMC
       self.scales = scales
       # # only for num_mixture_logistic=1
       # locs = tf.squeeze(locs, [3])
@@ -642,40 +642,42 @@ class PixelCNN(distribution.Distribution):
         safe_x = tf.where(x_ok, x, tf.ones_like(x))
         return tf.where(x_ok, f(safe_x), safe_f(x))
       
-      cdf_lower = safe_cdf_lower(value)  # BMHWC
-      cdf_upper = safe_cdf_upper(value + 1)
-      prob = cdf_upper - cdf_lower
-      # prob = tf.Print(prob, [tf.shape(cdf_lower), tf.shape(prob), tf.shape(component_logits)], summarize=10, message="param shapes")
-      # prob = tf.Print(prob, [
-      #   tf.reduce_sum(tf.cast(tf.math.is_nan(prob), tf.int32)), tf.reduce_sum(tf.cast(tf.math.is_inf(prob), tf.int32))],
-      #    message="safe prob nans")
-      prob = tf.math.reduce_sum(prob * component_logits, axis=1)
-      # prob = tf.Print(prob, [tf.shape(prob), tf.reduce_min(prob), tf.reduce_max(prob), prob], summarize=100, message="prob shape, probs")
-
       def safe_log_prob(x):
         x_ok = tf.not_equal(x, 0.)
         f = lambda x: tf.math.log(x)
         safe_f = lambda x: tf.math.log(tf.ones_like(x) * 1e-8)
         safe_x = tf.where(x_ok, x, tf.ones_like(x))
         return tf.where(x_ok, f(safe_x), safe_f(x))
+      
+      # cdf_lower = safe_cdf_lower(value)  # BMHWC
+      # cdf_upper = safe_cdf_upper(value + 1)
+      # prob = cdf_upper - cdf_lower
+      # # prob = tf.Print(prob, [tf.shape(cdf_lower), tf.shape(prob), tf.shape(component_logits)], summarize=10, message="param shapes")
+      # # prob = tf.Print(prob, [
+      # #   tf.reduce_sum(tf.cast(tf.math.is_nan(prob), tf.int32)), tf.reduce_sum(tf.cast(tf.math.is_inf(prob), tf.int32))],
+      # #    message="safe prob nans")
+      # prob = tf.math.reduce_sum(prob * component_logits, axis=1)
+      # # prob = tf.Print(prob, [tf.shape(prob), tf.reduce_min(prob), tf.reduce_max(prob), prob], summarize=100, message="prob shape, probs")
+      # log_probs = safe_log_prob(prob)
+      # # log_probs = tf.Print(log_probs, [
+      # #   tf.reduce_sum(tf.cast(tf.math.is_nan(log_probs), tf.int32)), tf.reduce_sum(tf.cast(tf.math.is_inf(log_probs), tf.int32)),
+      # #   tf.reduce_sum(tf.cast(tf.math.is_nan(cdf_upper), tf.int32)), tf.reduce_sum(tf.cast(tf.math.is_inf(cdf_upper), tf.int32)),
+      # #   tf.reduce_sum(tf.cast(tf.math.is_nan(cdf_lower), tf.int32)), tf.reduce_sum(tf.cast(tf.math.is_inf(cdf_lower), tf.int32))],
+      # #    message="safe log prob nans")
+      # # log_probs = tf.Print(log_probs, [log_probs, cdf_lower, cdf_upper], summarize=100, message="safe log_probs, cdfs")
+      # # log_probs = tf.Print(log_probs, [tf.reduce_min(log_probs), tf.reduce_max(log_probs)], summarize=100, message="safe log_probs min and max")
+      # # log_probs = tf.Print(log_probs, [tf.reduce_min(cdf_upper), tf.reduce_max(cdf_upper)], summarize=100, message="safe cdf_upper min and max")
+      # # log_probs = tf.Print(log_probs, [tf.reduce_min(cdf_lower), tf.reduce_max(cdf_lower)], summarize=100, message="safe cdf_lower min and max")
 
-      log_probs = safe_log_prob(prob)
-      # log_probs = tf.Print(log_probs, [
-      #   tf.reduce_sum(tf.cast(tf.math.is_nan(log_probs), tf.int32)), tf.reduce_sum(tf.cast(tf.math.is_inf(log_probs), tf.int32)),
-      #   tf.reduce_sum(tf.cast(tf.math.is_nan(cdf_upper), tf.int32)), tf.reduce_sum(tf.cast(tf.math.is_inf(cdf_upper), tf.int32)),
-      #   tf.reduce_sum(tf.cast(tf.math.is_nan(cdf_lower), tf.int32)), tf.reduce_sum(tf.cast(tf.math.is_inf(cdf_lower), tf.int32))],
-      #    message="safe log prob nans")
-      # log_probs = tf.Print(log_probs, [log_probs, cdf_lower, cdf_upper], summarize=100, message="safe log_probs, cdfs")
-      # log_probs = tf.Print(log_probs, [tf.reduce_min(log_probs), tf.reduce_max(log_probs)], summarize=100, message="safe log_probs min and max")
-      # log_probs = tf.Print(log_probs, [tf.reduce_min(cdf_upper), tf.reduce_max(cdf_upper)], summarize=100, message="safe cdf_upper min and max")
-      # log_probs = tf.Print(log_probs, [tf.reduce_min(cdf_lower), tf.reduce_max(cdf_lower)], summarize=100, message="safe cdf_lower min and max")
+      self.learned_log_prob = lambda v: safe_log_prob(tf.math.reduce_sum((safe_cdf_upper(v + 1) - safe_cdf_lower(v)) * component_logits, axis=1))
+      log_probs = self.learned_log_prob(value)
 
       if return_per_pixel:
-        return tf.squeeze(log_probs, axis=-1)
+        return tf.squeeze(log_probs, axis=-1)  # remove channel
       else:
         log_probs = tf.reduce_sum(log_probs, axis=[1, 2, 3])
         img_log_probs = tf.reshape(log_probs, image_batch_and_conditional_shape)
-        log_probs = tf.Print(log_probs, [tf.shape(log_probs), tf.shape(cdf_lower), tf.shape(cdf_upper)], summarize=100, message="log_probs, cdfs")
+        # log_probs = tf.Print(log_probs, [tf.shape(log_probs), tf.shape(cdf_lower), tf.shape(cdf_upper)], summarize=100, message="log_probs, cdfs")
         return img_log_probs
 
     elif dist_family == 'beta':
@@ -830,7 +832,9 @@ class PixelCNN(distribution.Distribution):
       if not return_per_pixel:
         dist = independent.Independent(dist, reinterpreted_batch_ndims=2)
     value = tf.Print(value, [tf.shape(value), value], 'value_shape', summarize=100)
-    log_px = dist.log_prob(value)
+    self.learned_log_prob = lambda v: dist.log_prob(v)
+    # log_px = dist.log_prob(value)
+    log_px = self.learned_log_prob(value)
     log_px = tf.Print(log_px, [log_px], summarize=30, message="per pixel lp")
     log_px = tf.Print(log_px, [tf.reduce_sum(tf.cast(tf.math.is_nan(log_px), tf.int32)), tf.reduce_sum(tf.cast(tf.math.is_inf(log_px), tf.int32))], summarize=30, message="nans or infs")
     # dist.log_prob(tf.reshape(tf.cast(tf.zeros_like(value) + tf.range(28), tf.float32), (28, 28)))

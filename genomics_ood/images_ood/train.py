@@ -89,6 +89,8 @@ flags.DEFINE_integer('dist_high', 255, 'max boundary for logistic')
 flags.DEFINE_string('dist', 'logistic', 'logistic|categorical|kumaraswamy')
 flags.DEFINE_string('output', 'v0', 'version of output scaling')
 flags.DEFINE_boolean('condition_count', False, 'plot gradient histograms')
+flags.DEFINE_boolean('jsd', False, 'compute jsd instead of kl (i.e. mle)')
+flags.DEFINE_float('true_p_off_prob', 1e-8, 'total probability assigned to pixel values other than the true one')
 FLAGS = flags.FLAGS
 
 
@@ -265,6 +267,15 @@ def main(unused_argv):
         penalty = FLAGS.lambda_penalty * tf.math.abs(corr_px_fx)
         log_prob_i = log_prob_i - penalty
     loss = -tf.reduce_mean(log_prob_i)
+    if FLAGS.jsd:
+      batch = tf.shape(tr_in_im['image'])[0]
+      n_channel = 1 if FLAGS.exp in ['fashion', 'mnist', 'single_pixel', 'ones'] else 3
+      values = tf.reshape(tf.repeat(tf.cast(tf.range(256), tf.float32), batch * n_dim * n_dim * n_channel), (256, batch, n_dim, n_dim, n_channel))
+      log_qx_i = tf.vectorized_map(dist.learned_log_prob, values)
+      log_px_i = tf.tensor_scatter_nd_add(
+        tf.zeros_like(tr_in_im['image']) + tf.math.log(FLAGS.true_p_off_prob), tr_in_im['image'], tf.math.log(1 - FLAGS.true_p_off_prob), name=None
+      )  # BHWC
+      loss += tf.math.exp(log_qx_i) * (log_qx_i - tf.expand_dims(log_px_i, 0))
 
     if FLAGS.condition_count:
       num_zeros = tf.reduce_sum(tf.cast(tf.math.equal(val_in_im['image'], tf.zeros_like(val_in_im['image'])), tf.float32), axis=[1, 2, 3])  / 784.
