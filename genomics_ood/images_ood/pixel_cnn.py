@@ -829,14 +829,15 @@ class PixelCNN(distribution.Distribution):
       self.locs = tf.squeeze(locs, [3])
       self.scales = tf.squeeze(scales, [3])
       dist = uniform.Uniform(low=tf.minimum(self.locs, self.scales), high=tf.maximum(self.locs, self.scales))
+      pixel_dist = dist
       if not return_per_pixel:
         dist = independent.Independent(dist, reinterpreted_batch_ndims=2)
     value = tf.Print(value, [tf.shape(value), value], 'value_shape', summarize=100)
-    self.learned_log_prob = lambda v: dist.log_prob(v)
-    # log_px = dist.log_prob(value)
-    log_px = self.learned_log_prob(value)
-    log_px = tf.Print(log_px, [log_px], summarize=30, message="per pixel lp")
-    log_px = tf.Print(log_px, [tf.reduce_sum(tf.cast(tf.math.is_nan(log_px), tf.int32)), tf.reduce_sum(tf.cast(tf.math.is_inf(log_px), tf.int32))], summarize=30, message="nans or infs")
+    self.learned_log_prob = lambda v: pixel_dist.log_prob(v)
+    log_px = dist.log_prob(value)
+    # log_px = self.learned_log_prob(value)
+    # log_px = tf.Print(log_px, [log_px], summarize=30, message="per pixel lp")
+    # log_px = tf.Print(log_px, [tf.reduce_sum(tf.cast(tf.math.is_nan(log_px), tf.int32)), tf.reduce_sum(tf.cast(tf.math.is_inf(log_px), tf.int32))], summarize=30, message="nans or infs")
     # dist.log_prob(tf.reshape(tf.cast(tf.zeros_like(value) + tf.range(28), tf.float32), (28, 28)))
     if return_per_pixel:
       return log_px

@@ -86,9 +86,10 @@ def load_fmnist_datasets(data_dir, out_data='mnist', binarize=False):
       os.path.join(data_dir, 'fashion_mnist_test.npy'), binarize=binarize)
   test1_in = load_tfdata_from_np(os.path.join(data_dir, 'fashion_mnist_test1.npy'), binarize=binarize)
 
-  val_ood = load_tfdata_from_np(os.path.join(data_dir, 'notmnist.npy'), binarize=binarize)
-  test1_ood = load_tfdata_from_np(os.path.join(data_dir, 'mnist_test1.npy'), binarize=binarize)
   if out_data == 'mnist':
+    tr_ood = load_tfdata_from_np(os.path.join(data_dir, 'mnist_train.npy'), binarize=binarize)
+    val_ood = load_tfdata_from_np(os.path.join(data_dir, 'notmnist.npy'), binarize=binarize)
+    test1_ood = load_tfdata_from_np(os.path.join(data_dir, 'mnist_test1.npy'), binarize=binarize)
     test_ood = load_tfdata_from_np(os.path.join(data_dir, 'mnist_test.npy'), binarize=binarize)
   elif out_data == 'hflip':
     test_ood = load_tfdata_from_np(
@@ -118,7 +119,7 @@ def load_fmnist_datasets(data_dir, out_data='mnist', binarize=False):
     labels = images
     test_ood = tf.compat.v1.data.Dataset.from_tensor_slices(
       (images, labels)).map(tensor_slices_preprocess)
-  return {
+  results = {
       'tr_in': tr_in,
       'val_in': val_in,
       'test_in': test_in,
@@ -127,6 +128,9 @@ def load_fmnist_datasets(data_dir, out_data='mnist', binarize=False):
       'test_ood': test_ood,
       'test1_ood': test1_ood
   }
+  if out_data == 'mnist':
+    results['tr_ood'] = tr_ood
+  return results
 
 def load_mnist_datasets(data_dir):
   """Load MNIST and fashionMNIST dataset from np array."""
@@ -157,8 +161,8 @@ def load_cifar_datasets(data_dir, out_data='svhn'):
   test_in = load_tfdata_from_np(os.path.join(data_dir, 'cifar10_test.npy'))
 
   if out_data == 'svhn':
-    test_ood = load_tfdata_from_np(
-        os.path.join(data_dir, 'svhn_cropped_test.npy'))
+    tr_ood = load_tfdata_from_np(os.path.join(data_dir, 'svhn_cropped_tr.npy'))
+    test_ood = load_tfdata_from_np(os.path.join(data_dir, 'svhn_cropped_test.npy'))
   elif out_data == 'celeba':
     test_png_idx = range(182638, 202599 + 1)
     images = []
@@ -197,12 +201,15 @@ def load_cifar_datasets(data_dir, out_data='svhn'):
     (images, labels)).map(tensor_slices_preprocess)
   elif out_data == 'imagenet32':
     raise NotImplemented("imagenet32 not yet set up")
-  return {
+  results = {
       'tr_in': tr_in,
       'val_in': val_in,
       'test_in': test_in,
       'test_ood': test_ood  # val_ood is val_in_grey
   }
+  if out_data == 'svhn':
+    results['tr_ood'] = tr_ood
+  return results
 
 def tensor_slices_preprocess(x, y):
   new = {}
@@ -334,9 +341,9 @@ def eval_on_data(data,
   # NOTE: return_per_pixel collapses channels, e.g. for cifar
   # log_prob is [b, h, w]
   # emd is [b, h, w, c]
+  num_zeros = tf.reduce_sum(tf.cast(tf.math.equal(data_im['image'], tf.zeros_like(data_im['image'])), tf.int32), axis=[1, 2, 3])
+  num_zeros = tf.Print(num_zeros, [tf.shape(num_zeros), tf.shape(data_im['image'])], summarize=10, message="num zeros")
   if condition_count:
-    num_zeros = tf.reduce_sum(tf.cast(tf.math.equal(data_im['image'], tf.zeros_like(data_im['image'])), tf.int32), axis=[1, 2, 3])
-    num_zeros = tf.Print(num_zeros, [tf.shape(num_zeros), tf.shape(data_im['image'])], summarize=10, message="num zeros")
     log_prob = dist.log_prob(data_im['image'], return_per_pixel=return_per_pixel, dist_family=dist_family, conditional_input=num_zeros)
   else:
     log_prob = dist.log_prob(data_im['image'], return_per_pixel=return_per_pixel, dist_family=dist_family)
