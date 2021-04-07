@@ -462,12 +462,13 @@ class PixelCNN(distribution.Distribution):
         mixture_distribution=mixture_distribution,
         components_distribution=logistic_dist)
 
-    if return_per_pixel:
-      return dist
-    else:
-      # return independent.Independent(dist, reinterpreted_batch_ndims=2)
-      # now that channel dim is still present, need to move over additional dim
-      return independent.Independent(dist, reinterpreted_batch_ndims=3)
+    return dist
+    # if return_per_pixel:
+    #   return dist
+    # else:
+    #   # return independent.Independent(dist, reinterpreted_batch_ndims=2)
+    #   # now that channel dim is still present, need to move over additional dim
+    #   return independent.Independent(dist, reinterpreted_batch_ndims=3)
 
   def _log_prob(self,
                 value,
@@ -591,12 +592,17 @@ class PixelCNN(distribution.Distribution):
           img_log_probs = tf.reshape(log_probs, image_batch_and_conditional_shape)
           return img_log_probs
       else:
-        locs = tf.Print(locs, [tf.reduce_min(locs), tf.reduce_max(locs)], summarize=100, message="locs min and max")
-        scales = tf.Print(scales, [tf.reduce_min(scales), tf.reduce_max(scales)], summarize=100, message="scales min and max")
+        # locs = tf.Print(locs, [tf.reduce_min(locs), tf.reduce_max(locs)], summarize=100, message="locs min and max")
+        # scales = tf.Print(scales, [tf.reduce_min(scales), tf.reduce_max(scales)], summarize=100, message="scales min and max")
         # locs  = tf.Print(locs, [locs, tf.reduce_sum(tf.cast(tf.math.is_nan(locs), tf.int32))], message="locs are nan before")
         # scales  = tf.Print(scales, [scales, tf.reduce_sum(tf.cast(tf.math.is_nan(scales), tf.int32))], message="scales are nan before")
         dist = self._make_mixture_dist(
             component_logits, locs, scales, return_per_pixel=return_per_pixel, dist_family=dist_family)
+        pixel_dist = dist
+        if not return_per_pixel:
+          # return independent.Independent(dist, reinterpreted_batch_ndims=2)
+          # now that channel dim is still present, need to move over additional dim
+          dist = independent.Independent(dist, reinterpreted_batch_ndims=3)
     elif dist_family in ['logistic_transform', 'normal_transform']:
       self.locs = locs   # BHWMC
       self.scales = scales
@@ -832,7 +838,7 @@ class PixelCNN(distribution.Distribution):
       pixel_dist = dist
       if not return_per_pixel:
         dist = independent.Independent(dist, reinterpreted_batch_ndims=2)
-    value = tf.Print(value, [tf.shape(value), value], 'value_shape', summarize=100)
+    # value = tf.Print(value, [tf.shape(value), value], 'value_shape', summarize=100)
     self.learned_log_prob = lambda v: pixel_dist.log_prob(v)
     log_px = dist.log_prob(value)
     # log_px = self.learned_log_prob(value)

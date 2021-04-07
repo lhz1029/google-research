@@ -342,7 +342,7 @@ def eval_on_data(data,
   # log_prob is [b, h, w]
   # emd is [b, h, w, c]
   num_zeros = tf.reduce_sum(tf.cast(tf.math.equal(data_im['image'], tf.zeros_like(data_im['image'])), tf.int32), axis=[1, 2, 3])
-  num_zeros = tf.Print(num_zeros, [tf.shape(num_zeros), tf.shape(data_im['image'])], summarize=10, message="num zeros")
+  # num_zeros = tf.Print(num_zeros, [tf.shape(num_zeros), tf.shape(data_im['image'])], summarize=10, message="num zeros")
   if condition_count:
     log_prob = dist.log_prob(data_im['image'], return_per_pixel=return_per_pixel, dist_family=dist_family, conditional_input=num_zeros)
   else:
@@ -388,7 +388,7 @@ def eval_on_data(data,
       locs_list.append(locs_np)
       scales_list.append(scales_np)
       emd_i_list.append(np.expand_dims(emd_np, axis=-1))
-      print(count_np.shape)
+      # print(count_np.shape)
       count_i_list.append(count_np)
 
     except tf.errors.OutOfRangeError:
@@ -403,7 +403,7 @@ def eval_on_data(data,
     counts = np.concatenate(count_i_list)
     count_to_prob_dict = get_count_dict()
     log_p_count = np.log(np.array([count_to_prob_dict.get(count, 1e-500) for count in counts]))
-    print(log_p_count.shape)
+    # print(log_p_count.shape)
     log_prob_i_np = log_prob_i_np + log_p_count
   emd_i_t_np = np.vstack(emd_i_list)
   emd_i_np = np.sum(

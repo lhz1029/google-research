@@ -92,6 +92,7 @@ flags.DEFINE_boolean('condition_count', False, 'plot gradient histograms')
 flags.DEFINE_boolean('jsd', False, 'compute jsd instead of kl (i.e. mle)')
 flags.DEFINE_float('true_p_off_prob', 1e-8, 'total probability assigned to pixel values other than the true one')
 flags.DEFINE_boolean('negative_training', False, 'push down likelihoods for out-dist')
+flags.DEFINE_float('neg_log_threshold', -3000, 'log prob threshold')
 FLAGS = flags.FLAGS
 
 
@@ -146,7 +147,8 @@ def main(unused_argv):
       'condition_count': FLAGS.condition_count,
       'jsd': FLAGS.jsd,
       'true_p_off_prob': FLAGS.true_p_off_prob,
-      'negative_training': FLAGS.negative_training
+      'negative_training': FLAGS.negative_training,
+      'neg_log_threshold': FLAGS.neg_log_threshold
   }
 
   # Print and write parameter settings
@@ -282,10 +284,10 @@ def main(unused_argv):
       n_channel = 1 if FLAGS.exp in ['fashion', 'mnist', 'single_pixel', 'ones'] else 3
       values = tf.reshape(tf.repeat(tf.cast(tf.range(256), tf.float32), batch * n_dim * n_dim * n_channel), (256, batch, n_dim, n_dim, n_channel))
       log_qx_i = tf.vectorized_map(dist.learned_log_prob, values)
-      log_qx_i = tf.Print(log_qx_i, [tf.shape(log_qx_i)], message="qx i", summarize=10)
+      # log_qx_i = tf.Print(log_qx_i, [tf.shape(log_qx_i)], message="qx i", summarize=10)
       # place 1 - delta on the pixel value for the image, delta/255 everywhere else
       indices = tf.transpose(tf.unravel_index(indices=[i for i in range(FLAGS.batch_size * n_dim * n_dim * n_channel)], dims=[FLAGS.batch_size, n_dim, n_dim, n_channel]))
-      indices = tf.Print(indices, [tf.shape(indices), tf.shape(tr_in_im['image'])], summarize=10, message='shapes')
+      # indices = tf.Print(indices, [tf.shape(indices), tf.shape(tr_in_im['image'])], summarize=10, message='shapes')
       value_and_indices = tf.concat([tf.cast(tf.reshape(tr_in_im['image'], (-1, 1)), tf.int32), indices], axis=1)
       flattened_indices = tf.reduce_sum(value_and_indices, axis=1)
       # TODO probably a more efficient way that doesn't require flattening
@@ -294,27 +296,32 @@ def main(unused_argv):
         updates=tf.cast(tf.ones_like(flattened_indices), tf.float32) * tf.math.log((1. - 256/255 * FLAGS.true_p_off_prob)),
         shape=tf.constant([FLAGS.batch_size * n_dim * n_dim * n_channel * 256])
       )
-      log_px_i += FLAGS.true_p_off_prob/255.
-      log_px_i = tf.Print(log_px_i, [tf.shape(log_qx_i), tf.shape(log_px_i)], message="qx px i", summarize=10)
-      # log_px_i = tf.reshape(log_px_i, (256, FLAGS.batch_size, n_dim, n_dim, n_channel))
-      # log_qx_i = tf.reshape(log_qx_i, (256, FLAGS.batch_size, n_dim, n_dim, n_channel))
-      log_px_i = tf.reshape(log_px_i, (256, -1))
-      log_qx_i = tf.reshape(log_qx_i, (256, -1))
-      
-      loss += -tf.reduce_mean(tf.reduce_sum(tf.math.exp(log_qx_i) * (log_qx_i - log_px_i), axis=0))
+      log_px_i += tf.math.log(FLAGS.true_p_off_prob/255.)
+      # log_px_i = tf.Print(log_px_i, [tf.shape(log_qx_i), tf.shape(log_px_i)], message="qx px i", summarize=10)
+      log_px_i = tf.reshape(log_px_i, (256, FLAGS.batch_size, n_dim, n_dim, n_channel))
+      log_qx_i = tf.reshape(log_qx_i, (256, FLAGS.batch_size, n_dim, n_dim, n_channel))
+      # log_px_i = tf.reshape(log_px_i, (256, -1))
+      # log_qx_i = tf.reshape(log_qx_i, (256, -1))
+      penalty = tf.reduce_mean(tf.reduce_sum(tf.math.exp(log_qx_i) * (log_qx_i - log_px_i), axis=[0, 2, 3, 4]))
+      loss += penalty
     if FLAGS.negative_training:
       log_prob_i_neg = dist.log_prob(tr_ood_im['image'], return_per_pixel=False, dist_family=FLAGS.dist)
-      indicator = tf.cast(tf.math.greater(log_prob_i_neg, tf.math.log(FLAGS.true_p_off_prob)), tf.float32)
-      def safe_mean(log_probs, indicator_mask):
-        x = tf.reduce_sum(indicator_mask)
-        x_ok = tf.not_equal(x, 0.)
-        f = lambda x: tf.reduce_sum(log_prob_i_neg * indicator) / x
-        safe_f = lambda x: 0
-        safe_x = tf.where(x_ok, x, tf.ones_like(x))
-        return tf.where(x_ok, f(safe_x), safe_f(x))
-
-      loss += safe_mean(log_prob_i_neg, indicator)
-      # loss += tf.reduce_sum(log_prob_i_neg * indicator) / tf.reduce_sum(indicator)
+      # indicator = tf.cast(tf.math.greater(log_prob_i_neg, FLAGS.neg_log_threshold), tf.float32)
+      # def safe_mean(log_probs, indicator_mask):
+      #   x = tf.reduce_sum(indicator_mask)
+      #   x_ok = tf.not_equal(x, 0.)
+      #   f = lambda x: tf.reduce_sum(log_prob_i_neg * indicator) / x
+      #   safe_f = lambda x: 0
+      #   safe_x = tf.where(x_ok, x, tf.ones_like(x))
+      #   return tf.where(x_ok, f(safe_x), safe_f(x))
+      # penalty = safe_mean(log_prob_i_neg, indicator)
+      # loss += penalty
+      # # loss += tf.reduce_sum(log_prob_i_neg * indicator) / tf.reduce_sum(indicator)
+      penalty = tf.reduce_mean(
+        tf.where(tf.math.greater(log_prob_i_neg, FLAGS.neg_log_threshold),
+          log_prob_i_neg, tf.ones_like(log_prob_i_neg) * FLAGS.neg_log_threshold
+      ))
+      loss += penalty
 
     if FLAGS.condition_count:
       num_zeros = tf.reduce_sum(tf.cast(tf.math.equal(val_in_im['image'], tf.zeros_like(val_in_im['image'])), tf.float32), axis=[1, 2, 3])  / 784.
@@ -358,7 +365,7 @@ def main(unused_argv):
   if FLAGS.pixel_hist:
     locs = dist.locs  # BHWMC
     scales = dist.scales
-    locs = tf.Print(locs, [tf.shape(locs), tf.shape(scales)], summarize=10, message='shape')
+    # locs = tf.Print(locs, [tf.shape(locs), tf.shape(scales)], summarize=10, message='shape')
     # mixture dim is first
     locs = tf.transpose(locs, perm=[3, 0, 1, 2, 4])
     scales = tf.transpose(scales, perm=[3, 0, 1, 2, 4])
@@ -384,7 +391,7 @@ def main(unused_argv):
           # sparsity_summary = tf.summary.scalar("{}/grad/sparsity".format(v.name.replace(':', '_')), tf.nn.zero_fraction(g))
           summaries.append(grad_hist_summary)
           # summaries.append(sparsity_summary)
-  if FLAGS.deriv_constraint or FLAGS.corr_constraint:
+  if FLAGS.deriv_constraint or FLAGS.corr_constraint or FLAGS.jsd or FLAGS.negative_training:
     summaries.append(tf.compat.v1.summary.scalar('penalty', tf.reduce_mean(penalty)))
   merged_tr = tf.compat.v1.summary.merge(summaries)
   merged_val_in = tf.compat.v1.summary.merge(
