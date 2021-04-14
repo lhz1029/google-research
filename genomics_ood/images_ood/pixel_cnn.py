@@ -423,7 +423,7 @@ class PixelCNN(distribution.Distribution):
       #         bijector=sigmoid.Sigmoid(low=self._low - 1.5, high=self._high)))
       logistic_dist = transformed_distribution.TransformedDistribution(
               distribution=logistic.Logistic(loc=locs, scale=scales),
-              bijector=sigmoid.Sigmoid(low=self._low, high=self._high))
+              bijector=sigmoid.Sigmoid(low=self._low, high=self._high + 1))
     
     elif dist_family == 'kumaraswamy':
       logistic_dist = quantized_distribution.QuantizedDistribution(
@@ -1025,7 +1025,7 @@ class PixelCNN(distribution.Distribution):
       elif dist_family == 'logistic_transform':
         logistic_samp = transformed_distribution.TransformedDistribution(
           distribution=logistic.Logistic(loc=tf.squeeze(locs, axis=-1), scale=scale_tensors[i]),
-          bijector=sigmoid.Sigmoid(low=self._low, high=self._high)).sample(seed=seed)
+          bijector=sigmoid.Sigmoid(low=self._low, high=self._high + 1)).sample(seed=seed)
         logistic_samp = tf.Print(logistic_samp, [logistic_samp], message='in logistic transform')
       
       channel_samples.append(logistic_samp)
