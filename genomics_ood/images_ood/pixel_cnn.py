@@ -630,52 +630,32 @@ class PixelCNN(distribution.Distribution):
           distribution=normal.Normal(loc=locs, scale=scales),
           bijector=sigmoid.Sigmoid(low=self._low, high=self._high + 1))
 
-      def safe_cdf_lower(x):
+      def safe_log_cdf_lower(x):
         # add mixture component after batch dim
-        x = tf.repeat(tf.expand_dims(x, axis=1), repeats=2, axis=1)
+        x = tf.repeat(tf.expand_dims(x, axis=1), repeats=self._num_logistic_mix, axis=1)
         x_ok = tf.not_equal(x, self._low)
-        f = lambda x: logistic_dist.cdf(x)
+        f = lambda x: logistic_dist.log_cdf(x)
+        safe_f = lambda x: tf.ones_like(x) * -99999
+        safe_x = tf.where(x_ok, x, tf.ones_like(x))
+        return tf.where(x_ok, f(safe_x), safe_f(x))
+      
+      def safe_log_cdf_upper(x):
+        # add mixture component after batch dim
+        x = tf.repeat(tf.expand_dims(x, axis=1), repeats=self._num_logistic_mix, axis=1)
+        x_ok = tf.not_equal(x, self._high + 1)
+        f = lambda x: logistic_dist.log_cdf(x)
         safe_f = tf.zeros_like
         safe_x = tf.where(x_ok, x, tf.ones_like(x))
         return tf.where(x_ok, f(safe_x), safe_f(x))
       
-      def safe_cdf_upper(x):
-        # add mixture component after batch dim
-        x = tf.repeat(tf.expand_dims(x, axis=1), repeats=2, axis=1)
-        x_ok = tf.not_equal(x, self._high + 1)
-        f = lambda x: logistic_dist.cdf(x)
-        safe_f = tf.ones_like
-        safe_x = tf.where(x_ok, x, tf.ones_like(x))
-        return tf.where(x_ok, f(safe_x), safe_f(x))
-      
-      def safe_log_prob(x):
-        x_ok = tf.not_equal(x, 0.)
-        f = lambda x: tf.math.log(x)
-        safe_f = lambda x: tf.math.log(tf.ones_like(x) * 1e-8)
-        safe_x = tf.where(x_ok, x, tf.ones_like(x))
-        return tf.where(x_ok, f(safe_x), safe_f(x))
-      
-      # cdf_lower = safe_cdf_lower(value)  # BMHWC
-      # cdf_upper = safe_cdf_upper(value + 1)
-      # prob = cdf_upper - cdf_lower
-      # # prob = tf.Print(prob, [tf.shape(cdf_lower), tf.shape(prob), tf.shape(component_logits)], summarize=10, message="param shapes")
-      # # prob = tf.Print(prob, [
-      # #   tf.reduce_sum(tf.cast(tf.math.is_nan(prob), tf.int32)), tf.reduce_sum(tf.cast(tf.math.is_inf(prob), tf.int32))],
-      # #    message="safe prob nans")
-      # prob = tf.math.reduce_sum(prob * component_logits, axis=1)
-      # # prob = tf.Print(prob, [tf.shape(prob), tf.reduce_min(prob), tf.reduce_max(prob), prob], summarize=100, message="prob shape, probs")
-      # log_probs = safe_log_prob(prob)
-      # # log_probs = tf.Print(log_probs, [
-      # #   tf.reduce_sum(tf.cast(tf.math.is_nan(log_probs), tf.int32)), tf.reduce_sum(tf.cast(tf.math.is_inf(log_probs), tf.int32)),
-      # #   tf.reduce_sum(tf.cast(tf.math.is_nan(cdf_upper), tf.int32)), tf.reduce_sum(tf.cast(tf.math.is_inf(cdf_upper), tf.int32)),
-      # #   tf.reduce_sum(tf.cast(tf.math.is_nan(cdf_lower), tf.int32)), tf.reduce_sum(tf.cast(tf.math.is_inf(cdf_lower), tf.int32))],
-      # #    message="safe log prob nans")
-      # # log_probs = tf.Print(log_probs, [log_probs, cdf_lower, cdf_upper], summarize=100, message="safe log_probs, cdfs")
-      # # log_probs = tf.Print(log_probs, [tf.reduce_min(log_probs), tf.reduce_max(log_probs)], summarize=100, message="safe log_probs min and max")
-      # # log_probs = tf.Print(log_probs, [tf.reduce_min(cdf_upper), tf.reduce_max(cdf_upper)], summarize=100, message="safe cdf_upper min and max")
-      # # log_probs = tf.Print(log_probs, [tf.reduce_min(cdf_lower), tf.reduce_max(cdf_lower)], summarize=100, message="safe cdf_lower min and max")
+      def _logsum_expbig_minus_expsmall(big, small):
+        # big + tf.math.log1p(-tf.exp(small - big))
+        return tf.where(tf.math.equal(small, -99999),
+          big,
+          big + tf.math.log1p(-tf.exp(small - big))
+        )
 
-      self.learned_log_prob = lambda v: safe_log_prob(tf.math.reduce_sum((safe_cdf_upper(v + 1) - safe_cdf_lower(v)) * component_logits, axis=1))
+      self.learned_log_prob = lambda v: tf.reduce_sum(_logsum_expbig_minus_expsmall(safe_log_cdf_upper(v + 1), safe_log_cdf_lower(v))* component_logits, axis=1)
       log_probs = self.learned_log_prob(value)
 
       if return_per_pixel:
