@@ -650,9 +650,14 @@ class PixelCNN(distribution.Distribution):
       
       def _logsum_expbig_minus_expsmall(big, small):
         # big + tf.math.log1p(-tf.exp(small - big))
-        return tf.where(tf.math.equal(small, -99999),
+        return tf.where(
+          tf.math.equal(small, -99999.),
           big,
-          big + tf.math.log1p(-tf.exp(small - big))
+          tf.where(
+            tf.math.equal(tf.exp(small - big), 1),
+            tf.ones_like(big) * -99999.,
+            big + tf.math.log1p(-tf.exp(small - big))
+          )
         )
 
       self.learned_log_prob = lambda v: tf.reduce_sum(_logsum_expbig_minus_expsmall(safe_log_cdf_upper(v + 1), safe_log_cdf_lower(v))* component_logits, axis=1)
