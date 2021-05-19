@@ -17,12 +17,12 @@ r"""Evaluating Likelihood Ratios based on pixel_cnn model.
 
 
 """
-
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
 import os
+os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 
 from absl import app
 from absl import flags
@@ -56,6 +56,10 @@ flags.DEFINE_integer(
 flags.DEFINE_boolean('color_classes', False, 'whether to color by class (only for fashion mnist and mnist)')
 flags.DEFINE_string('dist_family', 'logistic', 'logistic|uniform|categorical')
 flags.DEFINE_boolean('binarize', False, 'whether to binarize data')
+flags.DEFINE_boolean('use_fcc', False, 'use fully connected layers instead of any convolution')
+flags.DEFINE_integer('blur', 0, 'The step of the selected ckpt.')
+flags.DEFINE_string('output_file', 'ood_results_blur.csv', 'csv filepath')
+flags.DEFINE_boolean('flip_color', False, 'white to black, black to white')
 FLAGS = flags.FLAGS
 
 REG_WEIGHT_LIST = [0, 10, 100]
@@ -71,11 +75,13 @@ def load_datasets(exp, data_dir):
   elif exp == 'fashion-hflip':
     datasets = utils.load_fmnist_datasets(data_dir, out_data='hflip')
   elif exp == 'fashion-omniglot':
-    datasets = utils.load_fmnist_datasets(data_dir, out_data='omniglot')
+    datasets = utils.load_fmnist_datasets(data_dir, out_data='omniglot', blur=FLAGS.blur, flip_color=FLAGS.flip_color)
   elif exp == 'fashion-gaussian':  # TODO need to deal with negatives
     datasets = utils.load_fmnist_datasets(data_dir, out_data='gaussian')
-  elif exp == 'fashion-uniform':  # TODO unif is uniform dist, but it's sometimes actually "constant" in the lit
+  elif exp == 'fashion-unif':  # unif is uniform dist, but it's sometimes actually "constant" in the lit
     datasets = utils.load_fmnist_datasets(data_dir, out_data='unif')
+  elif exp == 'fashion-constant': 
+    datasets = utils.load_fmnist_datasets(data_dir, out_data='constant')
   elif exp == 'mnist-fashion':
     datasets = utils.load_mnist_datasets(data_dir)
   elif exp == 'cifar-svhn':
@@ -126,7 +132,11 @@ def create_model_and_restore_ckpt(ckpt_file):
 
   # Define a Pixel CNN network
   input_shape = (params['n_dim'], params['n_dim'], params['n_channel'])
-  dist = pixel_cnn.PixelCNN(
+  if FLAGS.use_fcc:
+    model_class = pixel_cnn.PixelFCC
+  else:
+    model_class = pixel_cnn.PixelCNN
+  dist = model_class(
       image_shape=input_shape,
       dropout_p=params['dropout_p'],
       reg_weight=params['reg_weight'],
@@ -138,6 +148,12 @@ def create_model_and_restore_ckpt(ckpt_file):
       rescale_pixel_value=params['rescale_pixel_value'],
       output=params.get('output', 'v0'),
       conditional_shape=() if params.get('condition_count', False) else None,
+      receptive_field_dims=(3,3),
+      resnet_activation='concat_elu',
+      use_data_init=True,
+      low=0,
+      dtype=tf.float32,
+      name='PixelCNN'
   )
 
   saver = tf.compat.v1.train.Saver(max_to_keep=50000)
@@ -178,14 +194,15 @@ def load_data_and_model_and_pred(exp,
   dist, params, sess = create_model_and_restore_ckpt(ckpt_file)
   condition_count = params.get('condition_count', False)
 
-  # if condition_count:
-  #   samples = dist.sample((1, 672), dist_family=FLAGS.dist_family, conditional_input=list(range(59, 731)))
-  # else:
-  #   samples = dist.sample(500, dist_family=FLAGS.dist_family)
-  # samples_np, = sess.run([samples])
-  # print(samples_np.shape)
-  # np.save(f'{FLAGS.model_dir}/samples', samples_np)
-  # import sys; sys.exit()
+  # for i in range(1):
+  #   if condition_count:
+  #     samples = dist.sample((1, 672), dist_family=FLAGS.dist_family, conditional_input=list(range(59, 731)))
+  #   else:
+  #     samples = dist.sample(500, dist_family=FLAGS.dist_family)
+  #   samples_np, = sess.run([samples])
+  #   print(samples_np.shape)
+  #   np.save(f'{FLAGS.model_dir}/samples{i}', samples_np)
+  # # import sys; sys.exit()
 
   # Evaluations
   preds_in = utils.eval_on_data(
@@ -316,15 +333,19 @@ def main(unused_argv):
   # import sys; sys.exit()
   
   print(sum(preds_in['log_probs']))
+  print(sum(preds_ood['log_probs']))
   auc = utils.compute_auc(
       preds_in['log_probs'], preds_ood['log_probs'], pos_label=0)
   print('mle auc: ', auc)
   # same thing
   # auc = utils.compute_auc(
   #     -preds_in['emds'], -preds_ood['emds'], pos_label=0)
-  auc = utils.compute_auc(
-      preds_in['emds'], preds_ood['emds'], pos_label=1)
-  print('emd auc: ', auc)
+  # auc = utils.compute_auc(
+  #     preds_in['emds'], preds_ood['emds'], pos_label=1)
+  # print('emd auc: ', auc)
+  with open(FLAGS.output_file, 'a') as f:
+    writer = csv.writer(f)
+    writer.writerow([FLAGS.model_dir, FLAGS.exp, np.mean(preds_in['log_probs']), np.mean(preds_ood['log_probs']), auc])
   import sys; sys.exit()
   with open('evals_likelihood', 'a') as f:
     f.write('{}: {}\n'.format(FLAGS.model_dir, sum(preds_in['log_probs'])))

@@ -78,7 +78,7 @@ def load_ones(data_dir=None):
     (images, labels)).map(tensor_slices_preprocess)
   return d
 
-def load_fmnist_datasets(data_dir, out_data='mnist', binarize=False):
+def load_fmnist_datasets(data_dir, out_data='mnist', binarize=False, blur=0, flip_color=False):
   """Load fashionMNIST and MNIST dataset from np array."""
   tr_in = load_tfdata_from_np(os.path.join(data_dir, 'fashion_mnist_train.npy'), binarize=binarize)
   val_in = load_tfdata_from_np(os.path.join(data_dir, 'fashion_mnist_val.npy'), binarize=binarize)
@@ -98,6 +98,11 @@ def load_fmnist_datasets(data_dir, out_data='mnist', binarize=False):
     test_ood = load_tfdata_from_np(
       os.path.join(data_dir, 'fashion_mnist_test.npy'), flip='v', binarize=binarize)
   elif out_data == 'unif':
+    images = np.stack([np.random.uniform(size=(28, 28, 1)) for i in range(256)], axis=0)
+    labels = images
+    test_ood = tf.compat.v1.data.Dataset.from_tensor_slices(
+      (images, labels)).map(tensor_slices_preprocess)
+  elif out_data == 'constant':
     images = np.stack([np.ones((28, 28, 1)) * i for i in range(256)], axis=0)
     labels = images
     test_ood = tf.compat.v1.data.Dataset.from_tensor_slices(
@@ -111,6 +116,10 @@ def load_fmnist_datasets(data_dir, out_data='mnist', binarize=False):
     images = []
     for img_file in glob.glob(os.path.join(data_dir, 'omniglot', 'images_evaluation') + '/**/*.png', recursive=True):
       img = cv2.imread(img_file)
+      if flip_color:
+          img = 255 - img
+      if blur:
+          img = cv2.blur(img,(blur,blur))
       img = cv2.resize(img, (28, 28,)).astype('uint8')
       images.append(img)
     images = np.array(images)
@@ -124,9 +133,9 @@ def load_fmnist_datasets(data_dir, out_data='mnist', binarize=False):
       'val_in': val_in,
       'test_in': test_in,
       'test1_in': test1_in,
-      'val_ood': val_ood,
+    #   'val_ood': val_ood,
       'test_ood': test_ood,
-      'test1_ood': test1_ood
+    #   'test1_ood': test1_ood
   }
   if out_data == 'mnist':
     results['tr_ood'] = tr_ood
